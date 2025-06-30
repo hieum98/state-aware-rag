@@ -271,14 +271,16 @@ class LLMAgent:
             
 
 if __name__ == "__main__":
+    ## Deploy the llm server via sglang
+    ## python -m sglang.launch_server --host 0.0.0.0 --model-path Qwen/Qwen3-8B --reasoning-parser qwen3 # --port 30000 
     online_model_kwargs = {
-        # 'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        # 'url': None,  # Use default URL for the model
-        # 'api_key': None,  # Set your API key if required
-        'model_name': 'openai/qwen3-8B', 
-        'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
-        'api_key': 'your_api_key_here',  # Replace with your actual API key
-        'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
+        'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'url': None,  # Use default URL for the model
+        'api_key': None,  # Set your API key if required
+        # 'model_name': 'openai/qwen3-8B', 
+        # 'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
+        # 'api_key': 'your_api_key_here',  # Replace with your actual API key
+        # 'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
     }
     generate_kwargs = {
@@ -288,7 +290,7 @@ if __name__ == "__main__":
         'temperature': 1,  
         'n': 1, 
         'top_p': 0.9,
-        'max_tokens': 2048,  
+        'max_tokens': 4096,  
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,

@@ -1,0 +1,25 @@
+retriever_method: e5
+retrieval_model_path: intfloat/e5-base-v2
+# Path settings
+corpus_path: data/wiki18_100w.jsonl
+index_path: indexes/data00/jiajie_jin/flashrag_indexes/wiki_dpr_100w/e5_flat_inner.index
+# Indexing settings
+retrieval_pooling_method: mean
+faiss_gpu: false
+use_sentence_transformer: true
+bm25_backend: pyserini
+# Retriever settings
+retrieval_topk: 5
+retrieval_batch_size: 128
+retrieval_use_fp16: false
+# Query settings
+retrieval_query_max_length: 512
+# Cache settings
+save_dir: retrieval_cache
+save_retrieval_cache: true
+use_retrieval_cache: false
+retrieval_cache_path: retrieval_cache
+# Reranker settings
+use_reranker: false
+rerank_model_name: null
+rerank_model_path: null

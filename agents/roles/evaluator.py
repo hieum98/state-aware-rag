@@ -236,9 +236,9 @@ class Evaluator(LLMAgent):
             score = score.lower() if isinstance(score, str) else 'dead end'
             if score == 'highly promising':
                 score = 1.0
-            elif score == 'promising':
+            elif score == 'moderate potential':
                 score = 0.75
-            elif score == 'somewhat promising':
+            elif score == 'low potential':
                 score = 0.5
             else:
                 score = 0.1

@@ -8,7 +8,7 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
     assert len(keys) == len(value_type), "keys and value_type must have the same length"
     extracted_info = {}
     for key, vtype in zip(keys, value_type):
-        if vtype == 'str':
+        if vtype in ['str', 'Literal']:
             # When the value is a string, we can use regex to extract the value in the format of "key": "value"
             pattern = rf'"{key}":\s*"([^"]*)"'
             match = re.search(pattern, text, re.DOTALL)
@@ -35,16 +35,23 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
                     extracted_info[key] = float(match.group(1))
             else:
                 extracted_info[key] = None
-        elif vtype == 'List':
+        elif vtype in ['List', 'list']:
             # When the value is a list, we can use regex to extract the value in the format of "key": [value1, value2, ...]
             pattern = rf'"{key}":\s*\[(.*?)\]'
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 # Split the values by comma and strip whitespace
-                values = [v.strip().strip('"') for v in match.group(1).split(',')]
-                extracted_info[key] = values
+                extracted_info[key] = match.group(1)
             else:
-                extracted_info[key] = []
+                # match the case where it does not have ] in the end
+                pattern = rf'"{key}":\s*\[(.*)'
+                match = re.search(pattern, text, re.DOTALL)
+                if match:
+                    # Split the values by comma and strip whitespace
+                    # values = [v.strip().strip('"') for v in match.group(1).split(',')]
+                    extracted_info[key] = match.group(1)
+                else:
+                    extracted_info[key] = []
         else:
             raise ValueError(f"Unsupported value type: {vtype}. Supported types are: str, bool, int, float, list.")
     return extracted_info

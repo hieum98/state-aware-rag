@@ -1,6 +1,5 @@
 import time 
 from typing import Any, Dict, List, Optional, Union
-
 import pydantic
 
 from agents.llm_agents import LLMAgent
@@ -141,7 +140,7 @@ class Evaluator(LLMAgent):
         response = self.role_execute(batch, **kwargs)
         results = []
         for res in response:
-            relevance_score = res.get('relevance_score', 'poor')
+            relevance_score = res.get('relevance', 'poor')
             relevance_score = relevance_score.lower() if isinstance(relevance_score, str) else 'poor'
             if relevance_score == 'excellent':
                 relevance_score = 1.0
@@ -151,7 +150,7 @@ class Evaluator(LLMAgent):
                 relevance_score = 0.5
             else:
                 relevance_score = 0.1
-            sufficiency_score = res.get('sufficiency_score', 'poor')
+            sufficiency_score = res.get('sufficiency', 'poor')
             sufficiency_score = sufficiency_score.lower() if isinstance(sufficiency_score, str) else 'poor'
             if sufficiency_score == 'excellent':
                 sufficiency_score = 1.0
@@ -161,7 +160,7 @@ class Evaluator(LLMAgent):
                 sufficiency_score = 0.5
             else:
                 sufficiency_score = 0.1
-            coherence_score = res.get('coherence_score', 'poor')
+            coherence_score = res.get('coherence', 'poor')
             coherence_score = coherence_score.lower() if isinstance(coherence_score, str) else 'poor'
             if coherence_score == 'excellent':
                 coherence_score = 1.0
@@ -171,7 +170,7 @@ class Evaluator(LLMAgent):
                 coherence_score = 0.5
             else:
                 coherence_score = 0.1
-            factuality_score = res.get('factuality_score', 'poor')
+            factuality_score = res.get('factuality', 'poor')
             factuality_score = factuality_score.lower() if isinstance(factuality_score, str) else 'poor'
             if factuality_score == 'excellent':
                 factuality_score = 1.0
@@ -232,16 +231,37 @@ class Evaluator(LLMAgent):
         response = self.role_execute(batch, **kwargs)
         results = []
         for res in response:
-            score = res.get('outcome_score', 'dead end')
-            score = score.lower() if isinstance(score, str) else 'dead end'
-            if score == 'highly promising':
-                score = 1.0
-            elif score == 'moderate potential':
-                score = 0.75
-            elif score == 'low potential':
-                score = 0.5
+            step_quality = res.get('step_quality', 'poor')
+            step_quality = step_quality.lower() if isinstance(step_quality, str) else 'poor'
+            if step_quality == 'excellent':
+                step_quality = 1.0
+            elif step_quality == 'good':
+                step_quality = 0.75
+            elif step_quality == 'fair':
+                step_quality = 0.5
             else:
-                score = 0.1
+                step_quality = 0.1
+            overall_quality = res.get('overall_quality', 'poor')
+            overall_quality = overall_quality.lower() if isinstance(overall_quality, str) else 'poor'
+            if overall_quality == 'excellent':
+                overall_quality = 1.0
+            elif overall_quality == 'good':
+                overall_quality = 0.75
+            elif overall_quality == 'fair':
+                overall_quality = 0.5
+            else:
+                overall_quality = 0.1
+            conclusion_quality = res.get('conclusion_quality', 'poor')
+            conclusion_quality = conclusion_quality.lower() if isinstance(conclusion_quality, str) else 'poor'
+            if conclusion_quality == 'excellent':
+                conclusion_quality = 1.0
+            elif conclusion_quality == 'good':
+                conclusion_quality = 0.75
+            elif conclusion_quality == 'fair':
+                conclusion_quality = 0.5
+            else:
+                conclusion_quality = 0.1
+            score = (step_quality + overall_quality + conclusion_quality) / 3.0
             results.append(score)
         return results
 

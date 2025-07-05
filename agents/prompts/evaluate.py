@@ -70,71 +70,102 @@ First, provide a step-by-step analysis based on the four criteria below. Then, a
 """
 
 class PathAwareOutput(pydantic.BaseModel):
-    relevance_score: str = pydantic.Field(
+    relevance: str = pydantic.Field(
         ...,
         pattern=r"^(poor|fair|good|excellent)$",
+        description="The relevance of the selected information to the sub-question, based on how directly it addresses the question and its importance to the reasoning process."
     )
-    resoning_for_relevance: str = pydantic.Field(
+    relevance_details: str = pydantic.Field(
         ...,
-        description="A detailed explanation of the relevance score, including how the selected information relates to the sub-question."
+        description="A detailed explanation of the relevance score, including specific examples from the selected information and how it relates to the sub-question."
     )
-    sufficiency_score: str = pydantic.Field(
-        ...,
-        pattern=r"^(poor|fair|good|excellent)$",
-    )
-    reasoning_for_sufficiency: str = pydantic.Field(
-        ...,
-        description="A detailed explanation of the sufficiency score, including whether the selected information fully addressed the sub-question."
-    )
-    coherence_score: str = pydantic.Field(
+    sufficiency: str = pydantic.Field(
         ...,
         pattern=r"^(poor|fair|good|excellent)$",
+        description="The sufficiency of the selected information in answering the sub-question, based on whether it provides enough detail and comprehensiveness."
     )
-    reasoning_for_coherence: str = pydantic.Field(
+    sufficiency_details: str = pydantic.Field(
         ...,
-        description="A detailed explanation of the coherence score, including how the generated answer relates to the full reasoning trace."
+        description="A detailed explanation of the sufficiency score, including whether the information was comprehensive or left gaps that needed further explanation."
     )
-    factuality_score: str = pydantic.Field(
+    coherence: str = pydantic.Field(
         ...,
         pattern=r"^(poor|fair|good|excellent)$",
+        description="The logical coherence of the generated answer, based on whether it follows logically from the full reasoning trace and builds upon or contradicts previous conclusions."
     )
-    reasoning_for_factuality: str = pydantic.Field(
+    coherence_details: str = pydantic.Field(
         ...,
-        description="A detailed explanation of the factuality score, including whether the generated answer is supported by the selected information."
+        description="A detailed explanation of the coherence score, including how the generated answer follows logically from the full reasoning trace and whether it builds upon or contradicts previous conclusions."
+    )
+    factuality: str = pydantic.Field(
+        ...,
+        pattern=r"^(poor|fair|good|excellent)$",
+        description="The factual accuracy of the generated answer, based on whether it is supported by the selected information and does not contain unsupported claims."
+    )
+    factuality_details: str = pydantic.Field(
+        ...,
+        description="A detailed explanation of the factuality score, including whether the generated answer is factually correct according to the selected information and whether it contains unsupported claims."
     )
 
 
-OUTCOME_AWARE_PROMPT = """You are an expert evaluator with perfect knowledge of the correct final answer to a complex question. Your task is to assess a hypothetical reasoning path and determine its potential for leading an agent to the correct solution.
+OUTCOME_AWARE_PROMPT = """You are an expert assistant specializing in evaluating the quality of reasoning processes. You will be given: Original Question: The question the reasoning path attempts to answer; Reasoning Path: The sequence of steps, arguments, or inferences presented as the solution or explanation.; Correct Answer (Optional): The known correct answer to the Original Question. If not provided, the evaluation will focus solely on the intrinsic quality of the reasoning.
+Please analyze the provided Reasoning Path based on the following criteria. Structure your evaluation to address each point clearly, providing specific examples or references to the steps in the Reasoning Path where appropriate.
 
-### Context:
-An agent is trying to answer a main question. You are given the ground-truth answer and a potential future reasoning path that the agent might take.
+## Instructions:
+1. **Step-by-Step Analysis:** For each distinct step or component in the Reasoning Path:
+    - Logical Validity: Does the conclusion or assertion of this step logically follow from the preceding steps, given premises, or provided context? Identify any logical fallacies or gaps in inference.
+    - Factual Accuracy & Grounding: Are the claims, data, evidence, or premises introduced or utilized in this step factually correct? If context or documents are provided, is the information accurately drawn from and consistent with them? Note any inaccuracies or unsupported claims.
+    - Clarity & Precision: Is the language used in this step clear, precise, and unambiguous? Are there any terms or statements that are vague or could lead to misinterpretation? 
+    - Relevance: Does this step directly and meaningfully contribute to addressing the Original Question and reaching the final conclusion?
+2. **Overall Path Evaluation:** You will then assess the Reasoning Path as a whole, considering the following criteria:
+    - Coherence: Does the entire Reasoning Path demonstrate a logical and understandable flow? Do the steps connect smoothly and build upon each other in a cohesive manner? 
+    - Completeness & Sufficiency: Does the path include all necessary intermediate steps, information, and considerations required to logically bridge the gap from the Original Question to the final conclusion? Are there any critical omissions? Conversely, are there any redundant or superfluous steps that do not add value
+    - Consistency: Are there any internal contradictions or inconsistencies between different parts of the Reasoning Path?
+3. **Conclusion Assessment:** Based on whether a Correct Answer is provided or not, you will evaluate the final conclusion of the Reasoning Path:
+    - If a Correct Answer is provided: Does the Reasoning Path ultimately arrive at the Correct Answer? If the path's conclusion is incorrect, pinpoint the earliest step(s) where the error (logical, factual, calculational, misinterpretation, etc.) occurs that leads to the deviation. If the path's conclusion matches the Correct Answer, critically assess whether the reasoning process itself is sound, complete, and free of significant flaws. (It is possible to reach a correct answer through flawed reasoning).
+    - If no Correct Answer is provided (focus on intrinsic quality):
+        - Based solely on the structure, content, and evidence within the Reasoning Path, how convincing and well-supported is the stated conclusion?  
+        - What are the most significant strengths of the reasoning in supporting its conclusion?
+        - What are the most critical weaknesses or vulnerabilities in the reasoning that might undermine its conclusion?
+        - Overall Summary and Recommendations (Optional but Encouraged):
 
-**Main Question:**
-{main_question}
+Here are some examples: {examples}
 
-**Ground-Truth Final Answer:**
-{ground_truth_answer}
-
-**Reasoning Path to Evaluate:**
-{reasoning_path}
-
-### Task & Evaluation Rubric:
-First, provide a step-by-step analysis comparing the "Reasoning Path" against the "Ground-Truth Final Answer". Then, assign a single `outcome_score` from dead end to highly promising based on the rubric below.
-**Evaluation Criteria:**
-*   **Strategic Value:** Does this path move the agent closer to the "Ground-Truth Final Answer"?
-*   **Information Sufficiency:** Does the path contain the critical facts, evidence, and intermediate conclusions necessary to derive the final answer?
-*   **Path Viability:** How likely is it that an agent, having followed this path, can now correctly and completely answer the "Main Question"? A "highly promising" path is one that makes answering the final question straightforward. A "dead end" path contains errors or irrelevant information that leads away from the correct answer.
+Now, please evaluate the following reasoning process:
+Original Question: {original_question}
+Reasoning Path: {reasoning_path}
+Correct Answer (Optional): {correct_answer}
 """
 
 class OutcomeAwareOutput(pydantic.BaseModel):
-    outcome_score: Literal['dead end', 'low potential', 'moderate potential', 'highly promising'] = pydantic.Field(
+    step_quality: Literal['excellent', 'good', 'fair', 'poor'] = pydantic.Field(
         ...,
-        pattern=r"^(dead end|low potential|moderate potential|highly promising)$",
+        pattern=r"^(excellent|good|fair|poor)$",
+        description="The quality of the step in the reasoning process, based on logical validity, factual accuracy, clarity, and relevance."
     )
-    reasoning: str = pydantic.Field(
+    step_quality_details: str = pydantic.Field(
         ...,
-        description="A detailed explanation of the outcome score, including how the reasoning path relates to the ground-truth final answer."
+        description="A detailed explanation of the step quality, including logical validity, factual accuracy, clarity, and relevance."
     )
-
+    overall_quality: Literal['excellent', 'good', 'fair', 'poor'] = pydantic.Field(
+        ...,
+        pattern=r"^(excellent|good|fair|poor)$",
+        description="The overall quality of the reasoning path, considering coherence, completeness, and consistency."
+    )
+    overall_quality_details: str = pydantic.Field(
+        ...,
+        description="A detailed explanation of the overall quality, including coherence, completeness, and consistency."
+    )
+    conclusion_quality: Literal['excellent', 'good', 'fair', 'poor'] = pydantic.Field(
+        ...,
+        pattern=r"^(excellent|good|fair|poor)$",
+        description="The quality of the conclusion reached by the reasoning path, based on its correctness and the soundness of the reasoning process."
+    )
+    conclusion_quality_details: str = pydantic.Field(
+        ...,
+        description="A detailed explanation of the conclusion quality, including correctness, soundness of reasoning, and any critical flaws."
+    )
+   
+        
 
 

@@ -65,12 +65,6 @@ Context:
 {context}
 """
 
-# 4. **Output Format:** Respond in the following JSON structure with following fields:
-# - "reasoning": "<Reasoning  that led to the answer, including any assumptions made or steps taken to arrive at the conclusion>",
-# - "answer": "<Direct answer to the question without any additional explanation or context>",
-# - "detailed_answer": "<The complete answer, including any necessary explanations or clarifications. In this field, you should provide a comprehensive response that includes all relevant details, including the source of the information (i.e., the context or your own knowledge) and any assumptions made.>",
-# - "confidence": "<Confidence level in the answer, one of 'high', 'medium', or 'low'>"
-
 class AnswerOutput(pydantic.BaseModel):
     reasoning: str = pydantic.Field(
         ...,
@@ -89,3 +83,5 @@ class AnswerOutput(pydantic.BaseModel):
         pattern=r"^(high|medium|low)$",
         description="Confidence level in the answer, one of 'high', 'medium', or 'low'."
     )
+
+

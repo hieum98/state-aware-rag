@@ -12,7 +12,7 @@ from litellm import completion
 from litellm.utils import supports_response_schema
 from tqdm import tqdm
 
-from agents.utils import extract_info_from_text
+from agents.utils import convert_confidence_to_score, extract_info_from_text
 
 
 class ModelClient:
@@ -297,7 +297,7 @@ class LLMAgent:
                     print(f"Processing response for question {i}: {item}")
                 output_object = item.get('output', None)
                 if isinstance(output_object, output_schema):
-                    results.append(output_object.model_dump())
+                    extracted_info = output_object.model_dump()
                 else:
                     print("Warning: Output is not of type AnswerOutput, received:", output_object)
                     print("Trying to parse with regex...")
@@ -305,7 +305,9 @@ class LLMAgent:
                     keys = output_schema.model_fields.keys()
                     value_types = [field.annotation.__name__ for field in output_schema.model_fields.values()]
                     extracted_info = extract_info_from_text(output_object, keys, value_types)
-                    results.append(extracted_info)
+                if 'confidence' in extracted_info:
+                    extracted_info['confidence'] = convert_confidence_to_score(extracted_info['confidence'])
+                results.append(extracted_info)
             batch_results.append(results)
         if len(batch_results) == 1:
             return batch_results[0]

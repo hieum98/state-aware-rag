@@ -57,6 +57,16 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
     return extracted_info
 
 
+def convert_confidence_to_score(confidence: str) -> float:
+    confidence = confidence.lower() if isinstance(confidence, str) else 'low'
+    if confidence == 'high':
+        return 1.0
+    elif confidence == 'medium':
+        return 0.5
+    else:
+        return 0.1
+
+
 if __name__ == "__main__":
     subquestion = "What is the capital of France?\nParis is the capital of France.\nFrance is a country in Europe."
     text = '{\n\n"answerable_main_question": false,\n"subquestion": ' + f'"{subquestion}"' +\

@@ -265,7 +265,7 @@ if __name__ == "__main__":
     }
     retriever_agent = RetrieverAgent(online_kwargs=online_kwargs)
 
-    query = ["What is the capital of France?", "Who is the president of the United States?"]
+    query = ["Who is the Chilean footballer who left Arsenal in 2018?", "Which team did Southampton FC beat in the 1976 FA Cup final?"]
     # query = "When was the Declaration of Independence signed?"
     results = retriever_agent.search(query, top_k=32, instruction=None, reranker_top_k=5, reranker_instruction=None)
     breakpoint()

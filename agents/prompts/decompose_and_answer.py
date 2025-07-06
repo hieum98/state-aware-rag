@@ -3,8 +3,7 @@ import pydantic
 
 GENERATE_SUBQUESTION_PROMPT = """You are an expert assistant specializing in multi-hop question answering and reasoning decomposition. Your task is to analyze whether a main question can be answered with the provided context, and if not, generate a strategic subquestion that advances the reasoning process.
 
-## Core Principle: No Overlap
-The most important rule is: The generated subquestion must NOT be answerable using the provided context. If a logical subquestion can be answered by the context, it is not a true knowledge gap, and you must look for the next piece of missing information.
+## Core Principle: The generated subquestion must NOT be answerable using the provided context. If a logical subquestion can be answered by the context, it is not a true knowledge gap, and you must look for the next piece of missing information.
 
 ## Step-by-Step Instructions:
 1. **Analyze the Main Question:** Deconstruct the question to identify its core intent (e.g., factual lookup, comparison, causal link), key entities, and the information required for a complete answer.
@@ -84,4 +83,37 @@ class AnswerOutput(pydantic.BaseModel):
         description="Confidence level in the answer, one of 'high', 'medium', or 'low'."
     )
 
+
+GENERATE_QUERIES_FOR_RETRIEVER = """"You are a highly advanced Reasoning Engine. Your primary function is to deconstruct a user's Input (a question or statement) into a series of precise, self-contained, and essential search queries. The goal is to generate queries that, when answered, provide all the necessary facts to answer/verify the Input.
+
+## Guiding Principles for Queries
+1. The Zero-Synthesis Principle (Most Important): You MUST NOT introduce any new information, entities, or concepts that are not explicitly present in the original Input.
+2. Fully Self-Contained: The query must be completely understandable without any external context, including the original Input or other queries.
+3. Atomic: Each query must ask for one single, indivisible fact. Deconstruct questions containing conjunctions ("and", "or") or multiple attributes into separate queries.
+4. Essential & Non-Redundant: Every query must be necessary for the final answer, and must seek a unique piece of information not covered by other queries.
+
+## Instructions:
+1. Parse the Input: 
+    - If the input is a question: Identify its type (e.g., factual, comparative, causal, temporal), key entities, and the required reasoning steps. 
+    - If the input is a statement: Deconstruct it into its core, verifiable claims. Identify the key entities and the asserted relationships between them. Note that, a statement can be a declarative sentence, a claim, or a QA pair. If the input is a QA pair, treat it as a statement with an implied question.
+2. Generate Strategic Queries: Formulate a list of search queries to resolve the Input. Each query is a building block to reach the final answer that follows the guiding principles above. Do not try to replace them with the "answer" you think they represent. The goal is to provide the user with all the search components they would need to solve the problem from scratch.
+
+## Examples:
+{examples}
+
+---
+**Input:**
+{question}
+"""
+
+
+class QueriesGenerationOutput(pydantic.BaseModel):
+    queries: List[str] = pydantic.Field(
+        ...,
+        description="List of independent search queries generated from the input question or statement. Each query should be atomic, mutually exclusive, essential, and independent.",
+    )
+    reasoning: str = pydantic.Field(
+        ...,
+        description="Reasoning process explaining how you arrived at the queries, including the analysis of the input and the identification of knowledge gaps.",
+    )
 

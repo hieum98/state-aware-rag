@@ -35,8 +35,7 @@ class Extractor(LLMAgent):
             assert isinstance(document, str), "document must be a string when question is a string"
             current_step_objective = [current_step_objective]
             document = [document]
-        if len(question) > 1:
-            kwargs['n'] = 1
+        kwargs['n'] = 1 # Always generate one response
         assert len(question) == len(current_step_objective) == len(document), "question, current_step_objective, and document must have the same length"
 
         batch = [

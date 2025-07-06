@@ -43,6 +43,9 @@ class Generator(LLMAgent):
 
         self.rephase_question_prompt = rephase_question.REPHRASE_QUESTION_PROMPT
         self.rephase_question_examples = None
+
+        self.generate_queries_prompt = decompose_and_answer.GENERATE_QUERIES_FOR_RETRIEVER
+        self.generate_queries_examples = None
     
     def generate_answer(
             self,
@@ -277,6 +280,37 @@ class Generator(LLMAgent):
         kwargs['output_schema'] = rephase_question.RephraseQuestionOutput
         return self.role_execute(batch, **kwargs)
 
+    def generate_queries_for_retriever(
+            self,
+            question: Union[str, List[str]],
+            **kwargs: Any
+    ):
+        """Generate queries for a given question or a batch of questions to be used in a retriever.
+        Args:
+            question (Union[str, List[str]]): A single question or a list of questions to generate queries for.
+            **kwargs (Any): Additional keyword arguments to pass to the batch generation method, such as temperature, top_p, max_tokens, etc.
+        Returns:
+            List[decompose_and_answer.QueriesGenerationOutput]: A list of QueriesGenerationOutput objects containing the generated queries and reasoning for each question.
+        """
+        if isinstance(question, str):
+            question = [question]
+        if len(question) > 1:
+            kwargs['n'] = 1
+        batch = [
+            self.generate_queries_prompt.format(
+                question=q,
+                examples=self.generate_queries_examples or "No examples provided."
+            ) for q in question
+        ]
+        batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
+        if self.verbose:
+            print("Generating queries for questions:", question)
+            print("Batch size:", len(batch))
+            for i, x in enumerate(batch):
+                print(f"Batch {i}: {x}")
+        kwargs['output_schema'] = decompose_and_answer.QueriesGenerationOutput
+        return self.role_execute(batch, **kwargs)
+
 if __name__ == "__main__":
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
@@ -292,7 +326,7 @@ if __name__ == "__main__":
         'temperature': 1,  
         'n': 1, 
         'top_p': 0.9,
-        'max_tokens': 4096,  
+        'max_tokens': 1024*16,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,
@@ -306,11 +340,10 @@ if __name__ == "__main__":
     )
 
     question = 'In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?'
-    batch = [question] + ["What is the capital of France?", "Who wrote 'To Kill a Mockingbird'?"] + ["What is the capital of Japan?"]
-    context = None
-    # context = ["Arsenal is a football club based in London.", "The capital of France is Paris.", "Harper Lee wrote 'To Kill a Mockingbird'."]
-    # results = generator.generate_answer(question=batch, context=context)
-    # breakpoint()
-    results = generator.generate_subquestion(question=batch, context=context)
+    context = "In 1976, Southampton FC won the FA Cup by beating Manchester United 1-0. The goal was scored by Bobby Stokes."
+    reasoning_trace = "In 2018, Alexis Sánchez left Arsenal FC to join Manchester United FC"
+    context = context + " " + reasoning_trace
+    # batch = [question] + ["What is the capital of France?", "Who wrote 'To Kill a Mockingbird'?"] + ["What is the capital of Japan?"]
+    results = generator.generate_synthesis(question=question, context=context)
     breakpoint()       
         

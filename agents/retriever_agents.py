@@ -86,7 +86,7 @@ class FlashRAGRetrieverAgent:
             "rerank_pooling_method": retrieval_pooling_method,
             "rerank_max_length": retrieval_query_max_length,
         }
-        self.query_instruction = kwargs.get('query_instruction', "")
+        self.query_instruction = kwargs.get('query_instruction', "") # Always empty for retriever agent because we will add the instruction in the search method.
         if index_path is None:
             index_path = self.build_index(config=self.config, save_dir="indexes",)['index_save_path']
         self.config["index_path"] = index_path
@@ -127,7 +127,7 @@ class FlashRAGRetrieverAgent:
             'index_save_path': index_builder.index_save_path,
         }
     
-    def search(self, query: Union[str, List[str]], top_k: Union[int, None] = None, return_score=False, instruction: str = ''):
+    def search(self, query: Union[str, List[str]], top_k: Union[int, None] = None, return_score=False, instruction: str = '', **kwargs):
         """
         Searches for the top-k relevant documents for a given query.
         Args:
@@ -170,7 +170,16 @@ class APIRetrieverAgent:
         self.retrieval_topk = kwargs.get('retrieval_topk', 5)
         self.query_instruction = kwargs.get('query_instruction', "")
 
-    def search(self, query: Union[str, List[str]], top_k: int = None, return_score=False, instruction: str = None):
+    def search(
+            self, 
+            query: Union[str, List[str]], 
+            top_k: int = None, 
+            return_score=False, 
+            instruction: str = None,
+            reranker_top_k: int = None,
+            reranker_instruction: str = None,
+            **kwargs
+            ):
         """
         Searches for the top-k relevant documents for a given query using an API.
         Args:
@@ -189,7 +198,9 @@ class APIRetrieverAgent:
             "query": query,
             "top_k": top_k,
             "return_score": return_score,
-            "instruction": instruction
+            "instruction": instruction,
+            "reranker_top_k": reranker_top_k if reranker_top_k is not None else 5,
+            "reranker_instruction": reranker_instruction
         })
         begin_time = time.time()
         response = requests.post(self.url, headers=self.headers, data=data)
@@ -198,8 +209,11 @@ class APIRetrieverAgent:
             raise Exception(f"Error: {response.status_code} - {response.text}")
         response_data = response.json()
         assert "retrieved_docs" in response_data, "Response does not contain 'retrieved_docs' key"
+        retrieved_docs = response_data.get("retrieved_docs")
+        if isinstance(query, str):
+            retrieved_docs = retrieved_docs[0]
         return {
-            "retrieved_docs": response_data.get("retrieved_docs", []),
+            "retrieved_docs": retrieved_docs,
             "scores": response_data.get("scores", []) if return_score else None,
             "response_time": end_time - begin_time
         }
@@ -213,7 +227,7 @@ class RetrieverAgent:
         else:
             self.agent = FlashRAGRetrieverAgent(**offline_kwargs)
     
-    def search(self, query: Union[str, List[str]], top_k: int = None, return_score=False, instruction: str = ''):
+    def search(self, query: Union[str, List[str]], top_k: int = None, return_score=False, instruction: str = '', **kwargs):
         """
         Searches for the top-k relevant documents for a given query.
         Args:
@@ -224,7 +238,7 @@ class RetrieverAgent:
         Returns:
             dict: A dictionary containing the retrieved documents and their scores (if requested).
         """
-        return self.agent.search(query, top_k=top_k, return_score=return_score, instruction=instruction)
+        return self.agent.search(query, top_k=top_k, return_score=return_score, instruction=instruction, **kwargs)
 
 
 if __name__ == "__main__":
@@ -246,11 +260,12 @@ if __name__ == "__main__":
 
     online_kwargs = {
         "url": "http://n0998.talapas.uoregon.edu:5000/search",
-        "retrieval_topk": 5,
+        "retrieval_topk": 32,
         "query_instruction": "query: ",
     }
     retriever_agent = RetrieverAgent(online_kwargs=online_kwargs)
 
     query = ["What is the capital of France?", "Who is the president of the United States?"]
-    results = retriever_agent.search(query, top_k=5, instruction=None)
+    # query = "When was the Declaration of Independence signed?"
+    results = retriever_agent.search(query, top_k=32, instruction=None, reranker_top_k=5, reranker_instruction=None)
     breakpoint()

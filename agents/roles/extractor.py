@@ -107,8 +107,10 @@ if __name__ == "__main__":
 
     document_3 = """The 1976 FA Cup Final took place on 1 May 1976 at Wembley Stadium. It was contested between Manchester United and Southampton. Southampton United had finished third in the First Division that season, and were strong favourites, while unfancied Southampton had finished sixth in the Second Division. In one of the biggest shocks in the history of the final, Southampton won 1–0 through an 83rd-minute goal from Bobby Stokes. It was the first time Southampton won a major trophy."""
 
-    document = f"Document 1: {document}\n\nDocument 2: {document_2}\n\nDocument 3: {document_3}"
+    document_4 = """Southampton won the Southern League championship for three years running between 1897 and 1899 and again in 1901, 1903 and 1904. During this time, they moved to a newly built £10,000 stadium called The Dell, to the northwest of the city centre in 1898. Although they would spend the next 103 years there, the future was far from certain in those early days and the club had to rent the premises first before they could afford to buy the stadium in the early part of the 20th century. The club reached the first of their four FA Cup Finals in 1900. On that day, they went down 4–0 to Bury and two years later they would suffer a similar fate at the hands of Sheffield United as they were beaten 2–1 in a replay of the 1902 final. Reaching those finals gave Southampton recognition, even internationally: in 1909, an Athletic Bilbao representative who played for affiliated team Atlético Madrid purchased 50 Saints shirts during a trip to England, which were shared between the two squads. This early Southampton connection is the reason why the colours of both Spanish clubs became red and white, as they are nowadays"""
 
-    results = generator.extract(question=question, current_step_objective=current_step_objective, document=document)
+    document = f"Document 1: {document}\n\nDocument 2: {document_2}\n\nDocument 3: {document_3}\n\nDocument 4: {document_4}"
+
+    results = generator.extract(question=question, current_step_objective=current_step_objective, document=document_4)
     breakpoint()
 

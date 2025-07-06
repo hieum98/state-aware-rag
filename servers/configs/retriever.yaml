@@ -1,15 +1,15 @@
 retriever_method: e5
 retrieval_model_path: intfloat/e5-base-v2
 # Path settings
-corpus_path: data/wiki18_100w.jsonl
-index_path: indexes/data00/jiajie_jin/flashrag_indexes/wiki_dpr_100w/e5_flat_inner.index
+corpus_path: /home/hieum/uonlp/action-selected-rag/data/wiki18_100w.jsonl
+index_path: /home/hieum/uonlp/action-selected-rag/indexes/data00/jiajie_jin/flashrag_indexes/wiki_dpr_100w/e5_flat_inner.index
 # Indexing settings
 retrieval_pooling_method: mean
 faiss_gpu: false
 use_sentence_transformer: true
 bm25_backend: pyserini
 # Retriever settings
-retrieval_topk: 5
+retrieval_topk: 32
 retrieval_batch_size: 128
 retrieval_use_fp16: false
 # Query settings

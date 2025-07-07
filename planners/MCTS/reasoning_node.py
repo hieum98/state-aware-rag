@@ -5,6 +5,7 @@ from enum import Enum, unique
 from hashlib import sha256
 from typing import List, Optional, Tuple, Union
 import tqdm
+import pprint
 
 from planners.MCTS.backbone import MCTS, Node
 from agents.roles.generator import Generator
@@ -528,49 +529,29 @@ class ReasoningNode(Node):
         Returns:
             float: The reward value for the node.
         """
-        if self.is_valid_leaf():
-            if self.node_type == NodeType.DIRECT_ANSWER:
-                answer = self.node_content["direct_answer"]
-            elif self.node_type == NodeType.SUBQUESTION:
-                answer = self.node_content["subanswer"]
-            reasoning = self.get_reasoning_trace()
-            user_question = self.node_config['user_question']
-            golden_answer = self.node_config.get('golden_answer', "Not provided")
-            path = self.get_path()
-            answer_confidence = self.node_content['confidence']
-        else:
-            # If the node is not a valid leaf, do generate direct answer and evaluate it
-            direct_answer_child = self.generate_final_answer_node()[0]
-            answer = direct_answer_child.node_content["direct_answer"]
-            reasoning = direct_answer_child.get_reasoning_trace()
-            user_question = direct_answer_child.node_config['user_question']
-            golden_answer = direct_answer_child.node_config.get('golden_answer', "Not provided")
-            path = direct_answer_child.get_path()
-            answer_confidence = direct_answer_child.node_content['confidence']
+        assert self.is_valid_leaf(), "Reward can only be calculated for valid leaf nodes."
+        user_question = self.node_config['user_question']
+        golden_answer = self.node_config['golden_answer']
+        answer = self.state['node_content'] 
+        answer_confidence = self.state['confidence']
+        path = self.get_path()
+        _, reasoning_scores = self.get_reasoning_trace(path)
+
+        # Answer reward
+        answer_side_reward = None
+        if golden_answer:
+            em_score = self.evaluator.evaluate_with_em(golden_answer, answer)[0]
+            judge_score = self.evaluator.evaluate_final_answer(question=user_question, correct_answer=golden_answer, answer=answer)
+            answer_side_reward = 0.5*(em_score + judge_score) * answer_confidence
         
-        # Answer side scoring
-        if golden_answer != "Not provided":                
-            output = self.generator.evaluate_answer(question=user_question, correct_answer=golden_answer, predicted_answer=answer)
-            reward = output['confidence'] + output['result'] + answer_confidence
-            reward = reward / 3.0 # Normalize the reward to be between 0 and 1
+        # Reasoning confidence reward
+        reasoning_side_reward = sum(reasoning_scores) / len(reasoning_scores) if reasoning_scores else 0.0
+        reward = 0.0
+        if answer_side_reward:
+            reward = 0.75 * answer_side_reward + 0.25 * reasoning_side_reward
         else:
-            query = f"{user_question}\n{answer}"
-            supporting_information_for_qa = self.get_supporting_information(query=query, instruction="query: ")
-            supporting_information_for_q = self.get_supporting_information(query=user_question, instruction="query: ")
-            supporting_information = f"\t**Retrieved information for question and answer**\n{supporting_information_for_qa}\n\t**Retrieved information for question**\n{supporting_information_for_q}"
-            output = self.generator.score_answer(question=user_question, answer=answer, context=supporting_information)
-            reward = output['score'] + answer_confidence
-            reward = reward / 2.0  # Normalize the reward to be between 0 and 1
-        # Path confidence scoring
-        path_confidence = [node.node_content['confidence'] for node in path if node.node_content['confidence'] is not None]
-        if path_confidence:
-            path_confidence_score = sum(path_confidence) / len(path_confidence)
-        else:
-            path_confidence_score = 0.0
-        # LLM reasoning scoring
-        reasoning_score = self.generator.score_reasoning(question=user_question, reasoning=reasoning, correct_answer=golden_answer)['score']
-        reasoning_reward = (path_confidence_score + reasoning_score) / 2.0  # Normalize the reasoning reward to be between 0 and 1
-        reward = (reward + reasoning_reward) / 2.0  # Combine the answer and reasoning rewards
+            reward = reasoning_side_reward
+
         return reward
     
     def find_random_child(self):
@@ -581,21 +562,17 @@ class ReasoningNode(Node):
         return random_child  # Return a random child node, or None if there are no children
         
     def __hash__(self):
-        """
-        Hash function for the ReasoningNode to use it as a key in dictionaries.
-        The hash is based on the node content and type, depth, and parent node hash.
-        This ensures that nodes with the same content and type will have the same hash value.
-        Returns:
-            int: A hash value based on the node content and type.
-        """
-        node_content_str = "\n".join(["{}: {}".format(k, v) for k, v in self.node_content.items()])
-        node_content_str = node_content_str + f"\nnode_type: {self.node_type.value}\ndepth: {self.depth}"
+        node = copy.deepcopy(self.state)
+        node['memory'] = self.memory if self.memory else [] 
+        node['node_type'] = self.node_type.value
+        node['depth'] = self.depth
         if self.parent is None:
             return  0  # If the node has no parent, return 0 as the hash value
         else:
             parent_hash = hash(self.parent) # Use the hash of the parent node to ensure uniqueness
-        node_content_str = node_content_str + f"\nparent_hash: {parent_hash}"
-        return int(sha256(node_content_str.encode('utf-8')).hexdigest(), 16) % (10 ** 8)  # Use a large prime number for better distribution
+        node['parent'] = parent_hash
+        node_content_str = json.dumps(node, sort_keys=True)  # Convert the node content to a string for hashing
+        return int(sha256(node_content_str.encode('utf-8')).hexdigest(), 16)
     
     def __eq__(self, other):
         """
@@ -609,117 +586,36 @@ class ReasoningNode(Node):
         if not isinstance(other, ReasoningNode):
             return False
         same_hash = hash(self) == hash(other)
-        same_content = self.node_content == other.node_content
         same_type = self.node_type == other.node_type
         same_depth = self.depth == other.depth
-        return same_hash and same_content and same_type and same_depth
+        return same_hash and same_type and same_depth
         
-    def print_node(self):
+    def get_node(self):
         """
         Print the node content in a readable format.
         """
-        node_content = copy.deepcopy(self.node_content)
-        node_content['node_type'] = self.node_type.value
-        node_content['depth'] = self.depth
-        node_content['parent'] = hash(self.parent) if self.parent else None
-        print("Node content:")
-        for key, value in node_content.items():
-            print(f"{key}: {value}")
-                
-
-if __name__=='__main__':
-    from planners.MCTS.reasoning_node import *
-
-    # Example usage
-    generator_online_model_kwargs = {
-        'model_name': 'qwen3-32b',
-        'url': 'http://n0999.talapas.uoregon.edu:30000/v1',
-        'api_key': 'None',
-        'concurrency': 64,
-    }
-    generate_kwargs = {
-        'temperature': 0.6,
-        'n': 1, # should be odd number ás it is used for majority voting
-        'top_p': 0.95,
-        'max_tokens': 8192,
-        'top_k': 20,
-        'repetition_penalty': 1.1,
-        'logprobs': 1,
-        'tensor_parallel_size': 1,
-    }
-    generator = Generator(online_model_kwargs=generator_online_model_kwargs, generate_kwargs=generate_kwargs, verbose=True)
-
-    retriever_online_kwargs = {
-        "url": "http://n0999.talapas.uoregon.edu:5000/search",
-        "retrieval_topk": 5,
-        "query_instruction": "query: ",
-    }
-    retriever = Retriever(online_kwargs=retriever_online_kwargs)
-
-    question = "Are director of film Move (1970 Film) and director of film Méditerranée (1963 Film) from the same country?"
-    root_node = ReasoningNode(
-        parent=None,
-        node_type=NodeType.USER_QUESTION,
-        depth=0,
-        generator=generator,
-        retriever=retriever,
-        question=question,
-        refine_retrieved_docs=True,
-    )
-
-    print("Root node created:")
-    root_node.print_node()
-    # print("Finding children nodes...")
-    # children = root_node.find_children()
-    # print(f"Found {len(children)} children nodes:")
-    # for child in children:
-    #     child.print_node()
-    # print("Finding random child node...")
-    # random_child = root_node.find_random_child()
-    # if random_child:
-    #     print("Random child node found:")
-    #     random_child.print_node()
-    # else:
-    #     print("No random child node found.")
-    # print("Generating direct answer node...")
-    # direct_answer_nodes = root_node.generate_direct_answer_node()
-    # print(f"Generated {len(direct_answer_nodes)} direct answer nodes:")
-    # for node in direct_answer_nodes:
-    #     node.print_node()
-    print("Generating reasoning node...")
-    reasoning_nodes = root_node.generate_reasoning_node()
-    print(f"Generated {len(reasoning_nodes)} reasoning nodes:")
-    for node in reasoning_nodes:
-        node.print_node()
-    # print("Generating subquestion node...")
-    # subquestion_nodes = root_node.generate_subquestion_node()
-    # print(f"Generated {len(subquestion_nodes)} subquestion nodes:")
-    # for node in subquestion_nodes:
-    #     node.print_node()
-    # print("Generating resubquestion node...")
-    # resubquestion_nodes = subquestion_nodes[0].generate_resubquestion_node()  # Generate resubquestion from the first subquestion node
-    # print(f"Generated {len(resubquestion_nodes)} resubquestion nodes:")
-    # for node in resubquestion_nodes:
-    #     node.print_node()
-    # print("Generating rephrase question node...")
-    # rephrase_question_nodes = root_node.generate_rephrase_question_node()
-    # print(f"Generated {len(rephrase_question_nodes)} rephrase question nodes:")
-    # for node in rephrase_question_nodes:
-    #     node.print_node()
-    # print("Finding children nodes again...")
-    # children = root_node.find_children()
-    # print(f"Found {len(children)} children nodes after generating all types:")
-    # for child in children:
-    #     child.print_node()
-    # print("Checking if the root node is terminal...")
-    # is_terminal = root_node.is_terminal()
-    # print(f"Is the root node terminal? {is_terminal}")
-    # print("Checking if the root node is a valid leaf...")
-    # is_valid_leaf = root_node.is_valid_leaf()
-    # print(f"Is the root node a valid leaf? {is_valid_leaf}")
-    # print("Calculating reward for the root node...")
-    # reward = root_node.reward()
-    # print(f"Reward for the root node: {reward}")        
+        node = copy.deepcopy(self.state)
+        node['memory'] = self.memory if self.memory else []
+        node['node_type'] = self.node_type.value
+        node['depth'] = self.depth
+        if self.parent is None:
+            node['parent'] = None
+        else:
+            node['parent'] = hash(self.parent)
+        path = self.get_path()
+        reasoning_path, reasoning_scores = self.get_reasoning_trace(path)
+        node['reasoning_path'] = reasoning_path
+        node['reasoning_scores'] = reasoning_scores
+        return node
+    
+    def print_node(self) -> str:
+        """
+        Print the node content in a readable format.
+        Returns:
+            str: A string representation of the node content.
+        """
+        node = self.get_node()
+        pprint.pprint(node, indent=4, width=120)
 
 
 

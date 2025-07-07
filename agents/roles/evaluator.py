@@ -5,6 +5,7 @@ import pydantic
 from agents.llm_agents import LLMAgent
 from agents.prompts import evaluate
 from agents.utils import extract_info_from_text
+from preprocess.utils import normalize_text
 
 
 class Evaluator(LLMAgent):
@@ -51,8 +52,7 @@ class Evaluator(LLMAgent):
             assert isinstance(predicted_answer, str), "predicted_answer must be a string when question is a string."
             predicted_answer = [predicted_answer]
             correct_answer = [correct_answer]
-        if len(question) > 1:
-            kwargs['n'] = 1
+        kwargs['n'] = 1
         
         assert len(question) == len(predicted_answer) == len(correct_answer), "The lengths of question, predicted_answer, and correct_answer must match."
         batch = [
@@ -74,15 +74,8 @@ class Evaluator(LLMAgent):
         responses = self.role_execute(batch, **kwargs)
         results = []
         for response in responses:
-            decision = response.get('decision', False)
-            confidence = response.get('confidence', 'low')
-            confidence = confidence.lower() if isinstance(confidence, str) else 'low'
-            if confidence == 'high':
-                results.append(decision*1.0)
-            elif confidence == 'medium':
-                results.append(decision*0.5)
-            else:
-                results.append(decision*0.1)
+            score = response.get('decision', False) * response.get('confidence', 0.1)
+            results.append(score)
         return results
     
     def evaluate_path_step(
@@ -214,8 +207,8 @@ class Evaluator(LLMAgent):
         
         batch = [
             self.outcome_aware_prompt.format(
-                main_question=mq,
-                ground_truth_answer=gt,
+                original_question=mq,
+                correct_answer=gt,
                 reasoning_path=rp,
                 examples=self.outcome_aware_examples if self.outcome_aware_examples else "Not provided."
             )
@@ -265,5 +258,89 @@ class Evaluator(LLMAgent):
             results.append(score)
         return results
 
-            
-    
+    def evaluate_with_em(self,
+            correct_answer: Union[str, List[str], List[List[str]]],
+            predicted_answer: Union[str, List[str]],
+            **kwargs: Any
+    ):
+        if isinstance(predicted_answer, str):
+            predicted_answer = [predicted_answer]
+            correct_answer = [correct_answer]
+        assert len(predicted_answer) == len(correct_answer), "The lengths of predicted_answer and correct_answer must match."
+        em_scores = []  
+        for pa, ca in zip(predicted_answer, correct_answer):
+            if isinstance(ca, list):
+                ca = ' '.join(ca)
+                ca = normalize_text(ca)
+                pa = normalize_text(pa)
+                if pa in ca or ca in pa:
+                    em_scores.append(1.0)
+                else:
+                    em_scores.append(0.0)
+            else:
+                ca = normalize_text(ca)
+                pa = normalize_text(pa)
+                if pa in ca or ca in pa:
+                    em_scores.append(1.0)
+                else:
+                    em_scores.append(0.0)
+        return em_scores
+
+
+if __name__ == "__main__":
+    online_model_kwargs = {
+        'model_name': 'openai/qwen3-8B', 
+        'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
+        'api_key': 'your_api_key_here',  # Replace with your actual API key
+        'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
+        'concurrency': 64,
+    }
+    generate_kwargs = {
+        # For creative tasks (creative writing) set it ~ 1, 
+        # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
+        # For general conversation set it ~ 0.7
+        'temperature': 1,  
+        'n': 1, 
+        'top_p': 0.9,
+        'max_tokens': 1024*16,  # Set to a high value to allow for long responses
+        # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
+        # For greedy decoding set it to 1
+        'top_k': 20,
+        'tensor_parallel_size': 1,
+        'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+    }
+    generator = Evaluator(
+        client_kwargs=online_model_kwargs, 
+        generate_kwargs=generate_kwargs, 
+        verbose=True
+    )
+
+    question = 'In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?'
+    correct_answer = ['Alexis Sánchez', 'Alexis Sanchez']
+    predicted_answer = 'Alexis Sanchez'
+    reasoning_trace = """
+    1. The Saints beat Manchester United in the 1976 FA Cup Final.
+    2. In 2018, Alexis Sánchez left Arsenal to join Manchester United.
+    Final Answer: Alexis Sánchez
+    """
+    # em_scores = generator.evaluate_with_em(correct_answer, predicted_answer)
+    # judge_score = generator.evaluate_final_answer(question=question, correct_answer=correct_answer, predicted_answer=predicted_answer)
+    path_score = generator.evaluate_path(main_question=question, reasoning_path=reasoning_trace, ground_truth_answer=correct_answer)
+    breakpoint()
+
+    question_2 = 'What is the capital of France?'
+    correct_answer_2 = 'Paris'
+    predicted_answer_2 = 'Paris'
+    reasoning_trace_2 = """
+    1. France is a country in Europe.
+    2. The capital of France is Paris.
+    Final Answer: Paris
+    """
+    correct_answer = [correct_answer, correct_answer_2]
+    predicted_answer = [predicted_answer, predicted_answer_2]
+    question = [question, question_2]
+    reasoning_trace = [reasoning_trace, reasoning_trace_2]
+    # # em_scores = generator.evaluate_with_em(correct_answer, predicted_answer)
+    # judge_scores = generator.evaluate_final_answer(question=question, correct_answer=correct_answer, predicted_answer=predicted_answer)
+    path_score = generator.evaluate_path(main_question=question, reasoning_path=reasoning_trace, ground_truth_answer=correct_answer)
+    breakpoint()

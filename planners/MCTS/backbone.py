@@ -60,7 +60,6 @@ class MCTS:
         self.N: Dict[Node, int] = defaultdict(int) # Number of visits for each node
         self.children: Dict[Node, List[Node]] = dict() # Children of each node
         self.exploration_weight = exploration_weight # Weight of exploration vs exploitation
-        self.memory: List[str] = [] # Internal memory for storing the knowledge that the MCTS has learned
         self.verbose = verbose # If True, print debug information
 
     def choose(self, node: Node):

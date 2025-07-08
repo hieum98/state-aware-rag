@@ -624,6 +624,7 @@ class ReasoningNode(Node):
         Print the node content in a readable format.
         """
         node = copy.deepcopy(self.state)
+        node['hash'] = hash(self)
         node['memory'] = self.memory if self.memory else []
         node['user_question'] = self.node_config['user_question']
         node['golden_answer'] = self.node_config['golden_answer']

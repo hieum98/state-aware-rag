@@ -58,10 +58,12 @@ class ReasoningNode(Node):
             max_depth: int = 15,
             golden_answer: Optional[Union[str, List[str]]] = None,
             user_question: Optional[str] = None,
+            verbose: bool = False,  
             **kwargs
     ):  
         super().__init__()
         self.node_config = {
+            "verbose": verbose,  # Whether to print verbose output
             "max_depth": max_depth,  # Maximum depth of the reasoning tree
             "golden_answer": golden_answer,  # The golden answer for the user question, if available
             "user_question": user_question,  # The main user question for USER_QUESTION nodes
@@ -70,6 +72,7 @@ class ReasoningNode(Node):
             "extractor": extractor,  # The extractor component for the node
             "retriever": retriever,  # The retriever component for the node
         }
+        self.verbose = verbose  # Whether to print verbose output
         self.parent = parent # Parent node in the MCTS tree, if none, this is the root node
         self.children: List["ReasoningNode"] = [] # Children nodes in the MCTS tree
         self.depth = depth
@@ -175,7 +178,6 @@ class ReasoningNode(Node):
         if len(reasoning_trace) == 0:
             return None, []
         trace = ""
-        trace += f"Reasoning trace for question '{self.state['user_question']}':\n"
         for i, step in enumerate(reasoning_trace):
             trace += f"Step {i+1}: {step}\n"
         if path[-1].node_type == NodeType.FINAL_ANSWER:
@@ -184,6 +186,8 @@ class ReasoningNode(Node):
         return trace, reasoning_scores
     
     def reflect(self, sub_question: Optional[str] = None) -> List[str]:
+        if self.verbose:
+            print(f"Reflecting on memory for sub-question: {sub_question}")
         memory_information = None
         if self.memory:
             # TODO: Try retrieving memory 
@@ -194,8 +198,10 @@ class ReasoningNode(Node):
         return memory_information
     
     def explore(self, user_question: str, sub_question: Optional[str] = None) -> List[str]:
+        if self.verbose:
+            print(f"Exploring external knowledge base for sub-question: {sub_question}")
         queries_for_retriever = self.generator.generate_queries_for_retriever(question=sub_question)[0]['queries']
-        retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=64, reranker_top_k=3)['retrieved_docs']
+        retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=2048, reranker_top_k=3)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
             retrieved_docs = sum(retrieved_docs, [])  # Flatten the list of lists
         # TODO: Try batch extraction
@@ -206,6 +212,8 @@ class ReasoningNode(Node):
         external_information = []
         if extracted_retrieval_information['decision'] == 'relevant':
             external_information = extracted_retrieval_information['extracted_information']
+        if not external_information:
+            breakpoint()
         return external_information
     
     def update_memory(
@@ -213,6 +221,10 @@ class ReasoningNode(Node):
             intermediate_conclusions: List[str], 
             step_explored_information: List[str],
             ):
+        if self.verbose:
+            print("Updating memory with new information.")
+            print(f"Intermediate conclusions: {intermediate_conclusions}")
+            print(f"Step explored information: {step_explored_information}")
         user_question = self.node_config['user_question']
         current_memory = "\n".join(self.memory) if self.memory else None
         intermediate_conclusions = "\n".join(intermediate_conclusions) if intermediate_conclusions else None
@@ -236,6 +248,8 @@ class ReasoningNode(Node):
             children (List[ReasoningNode]): A list of generated direct answer nodes.
             external_information (Optional[List[str]]): A list of important information from the external knowledge base.
         """
+        if self.verbose:
+            print("Generating final answer node.")
         user_question = self.node_config['user_question']
         path = self.get_path()
         reasoning_trace, _ = self.get_reasoning_trace(path)
@@ -252,11 +266,14 @@ class ReasoningNode(Node):
         response = self.generator.finalize(question=user_question, context=important_information)
         nodes = []
         for item in response:
+            answer = item['answer']
+            if answer is None or answer.strip() == "":
+                answer = f"{item['detailed_answer']}. \nReasoning: {item['reasoning']}" 
             node = ReasoningNode(
                 parent=self,
                 node_type=NodeType.FINAL_ANSWER,
                 depth=self.depth + 1,
-                answer=item['answer'],
+                answer=answer,
                 confidence=item['confidence'],
                 **self.node_config
             )
@@ -269,6 +286,8 @@ class ReasoningNode(Node):
             children (List[ReasoningNode]): A list of generated sub-question and answer nodes.
             external_information (Optional[List[str]]): A list of important information from the external knowledge base.
         """
+        if self.verbose:
+            print("Generating sub-question and answer node.")
         user_question = self.node_config['user_question']
         path = self.get_path()
         reasoning_trace, _ = self.get_reasoning_trace(path)
@@ -353,6 +372,8 @@ class ReasoningNode(Node):
                 return nodes, all_external_information
     
     def generate_rephrase_question_node(self) -> List["ReasoningNode"]:
+        if self.verbose:
+            print("Generating rephrased question node.")
         assert self.node_type in [NodeType.USER_QUESTION, NodeType.SUB_QA_NODE], "REPHASE_QUESTION nodes can only be generated from USER_QUESTION or SUB_QA_NODE nodes."
         if self.node_type == NodeType.USER_QUESTION:
             question = self.state['node_content']
@@ -375,6 +396,8 @@ class ReasoningNode(Node):
             children (List[ReasoningNode]): A list of generated self-corrected nodes.
             external_information (Optional[List[str]]): A list of important information from the external knowledge base.
         """
+        if self.verbose:
+            print("Generating self-corrected node.")
         assert self.node_type == NodeType.SUB_QA_NODE, "SELF_CORRECTED_NODE can only be generated from SUB_QA_NODE nodes."
         sub_question = self.state['sub_question']
         sub_answer = self.state['sub_answer']
@@ -390,7 +413,7 @@ class ReasoningNode(Node):
         if external_information:
             external_data = "\n".join(external_information)
             important_information += f"\t**Retrieved information from external knowledge base**\n{external_data}\n----------\n"
-        response = self.generator.self_correct(question=sub_question, answer=sub_answer, context=important_information)
+        response = self.generator.self_correct(question=sub_question, current_answer=sub_answer, context=important_information)
         nodes = []
         for item in response:
             node = ReasoningNode(
@@ -410,6 +433,8 @@ class ReasoningNode(Node):
         Returns:
             children (List[ReasoningNode]): A list of generated synthesis nodes.
         """
+        if self.verbose:
+            print("Generating synthesis node.")
         assert self.node_type in [NodeType.SUB_QA_NODE, NodeType.SELF_CORRECTED_NODE], "SYNTHESIS_NODE can only be generated from SUB_QA_NODE or SELF_CORRECTED_NODE nodes."
         user_question = self.node_config['user_question']
         path = self.get_path()
@@ -502,7 +527,11 @@ class ReasoningNode(Node):
         else:
             raise ValueError(f"Invalid node type: {self.node_type}. Must be one of {list(NodeType)}.")
         
+        if self.verbose:
+            print(f"Memory at depth: {self.depth}: \n{self.memory}")
         new_memory = self.update_memory(intermediate_conclusions=intermediate_conclusions, step_explored_information=explored_information)
+        if self.verbose:
+            print(f"Updated memory at depth: {self.depth + 1}: \n{new_memory}")
         for child in children:
             child.set_memory(new_memory)
         assert len(children) > 0, f"No children generated for node type: {self.print_node()}"
@@ -541,7 +570,8 @@ class ReasoningNode(Node):
         answer_side_reward = None
         if golden_answer:
             em_score = self.evaluator.evaluate_with_em(golden_answer, answer)[0]
-            judge_score = self.evaluator.evaluate_final_answer(question=user_question, correct_answer=golden_answer, answer=answer)
+            judge_score = self.evaluator.evaluate_final_answer(question=user_question, correct_answer=golden_answer, predicted_answer=answer)[0]
+
             answer_side_reward = 0.5*(em_score + judge_score) * answer_confidence
         
         # Reasoning confidence reward
@@ -551,7 +581,6 @@ class ReasoningNode(Node):
             reward = 0.75 * answer_side_reward + 0.25 * reasoning_side_reward
         else:
             reward = reasoning_side_reward
-
         return reward
     
     def find_random_child(self):
@@ -595,7 +624,10 @@ class ReasoningNode(Node):
         Print the node content in a readable format.
         """
         node = copy.deepcopy(self.state)
+        node['hash'] = hash(self)
         node['memory'] = self.memory if self.memory else []
+        node['user_question'] = self.node_config['user_question']
+        node['golden_answer'] = self.node_config['golden_answer']
         node['node_type'] = self.node_type.value
         node['depth'] = self.depth
         if self.parent is None:

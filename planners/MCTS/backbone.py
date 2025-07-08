@@ -97,7 +97,7 @@ class MCTS:
 
         return max(self.children[node], key=uct)
     
-    def _select(self, node: Node):
+    def _select(self, node: Node) -> List[Node]:
         """
         Select a node to expand using UCT (Upper Confidence Bound for Trees).
         The selection process is as follows:

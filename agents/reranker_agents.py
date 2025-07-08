@@ -4,6 +4,7 @@ import time
 from typing import List, Union
 import requests
 import torch
+import tqdm
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
 from vllm import LLM, SamplingParams
 from vllm.inputs.data import TokensPrompt
@@ -116,7 +117,7 @@ class VLLMReranker:
     def compute_logits(self, messages):
         outputs = self.model.generate(messages, self.sampling_params, use_tqdm=False)
         scores = []
-        for i in range(len(outputs)):
+        for i in tqdm.tqdm(range(len(outputs)), desc="Computing logits"):
             final_logits = outputs[i].outputs[0].logprobs[-1]
             token_count = len(outputs[i].outputs[0].token_ids)
             if self.true_token not in final_logits:

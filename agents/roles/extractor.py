@@ -48,20 +48,23 @@ class Extractor(LLMAgent):
         ]
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
-            print("Generating answers for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Generating extractions for questions:")
+            print("Questions:", question)
+            print("Current Step Objectives:", current_step_objective)
+            print("Documents:", document)
         kwargs['output_schema'] = extract.ExtractOutput
         responses = self.role_execute(batch, **kwargs)
         extracted_info = []
         for response in responses:
             decision = response['decision']
             try:
-                if isinstance(response['extracted_information'], list):
-                    info = [f"Information: {x['summary']}\nDetail: {x['reasoning']}" for x in response['extracted_information']]
+                if isinstance(response['information'], list):
+                    info = [f"Information: {x['summary']}\nDetail: {x['extracted_information']}" 
+                            for x in response['information']]
+                else:
+                    info = [response['information']]
             except:
-                info = [response['extracted_information']]
+                info = [response['information']]
             extracted_info.append({
                 'decision': decision,
                 'extracted_information': info,

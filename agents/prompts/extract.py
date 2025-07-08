@@ -50,7 +50,7 @@ class ExtractOutput(pydantic.BaseModel):
         ...,
         description="The decision on whether the document is relevant to the question and current step's objective. 'relevant' means the document contains useful information, while 'not_relevant' means it does not."
     )
-    extracted_information: list[InformationPiece] = pydantic.Field(
+    information: list[InformationPiece] = pydantic.Field(
         ...,
         description="A list of InformationPiece objects, each containing the extracted information, its summary, and the reasoning behind its extraction."
     )

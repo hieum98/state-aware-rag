@@ -66,10 +66,10 @@ class Evaluator(LLMAgent):
         ]
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
-            print("Generating answers for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Generating evaluations for final answers:")
+            print("Questions:", question)
+            print("Correct Answers:", correct_answer)
+            print("Predicted Answers:", predicted_answer)
         kwargs['output_schema'] = evaluate.EvaluateAnswerOutput
         responses = self.role_execute(batch, **kwargs)
         results = []
@@ -125,10 +125,12 @@ class Evaluator(LLMAgent):
         ]
         batch = [[{'role': 'user', 'content': x}] for x in batch]
         if self.verbose:
-            print("Generating evaluations for path steps:", main_question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Generating evaluations for path steps:")
+            print("Main Questions:", main_question)
+            print("Reasoning Traces:", reasoning_trace)
+            print("Sub Questions:", sub_question)
+            print("Selected Information:", selected_information)
+            print("Generated Answers:", generated_answer)
         kwargs['output_schema'] = evaluate.PathAwareOutput
         response = self.role_execute(batch, **kwargs)
         results = []
@@ -216,10 +218,10 @@ class Evaluator(LLMAgent):
         ]
         batch = [[{'role': 'user', 'content': x}] for x in batch]
         if self.verbose:
-            print("Generating evaluations for paths:", main_question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Generating evaluations for reasoning paths:")
+            print("Main Questions:", main_question)
+            print("Reasoning Paths:", reasoning_path)
+            print("Ground Truth Answers:", ground_truth_answer)
         kwargs['output_schema'] = evaluate.OutcomeAwareOutput
         response = self.role_execute(batch, **kwargs)
         results = []

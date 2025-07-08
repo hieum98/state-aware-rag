@@ -80,9 +80,7 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Generating answers for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Context:", context)
         kwargs['output_schema'] = decompose_and_answer.AnswerOutput
         return self.role_execute(batch, **kwargs)
 
@@ -119,10 +117,7 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Generating subquestions for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
-
+            print("Context:", context)
         kwargs['output_schema'] = decompose_and_answer.SubquestionOutput
         return self.role_execute(batch, **kwargs)
 
@@ -159,9 +154,7 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Generating synthesis for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Context:", context)
         kwargs['output_schema'] = synthesize.SynthesizeOutput
         return self.role_execute(batch, **kwargs)
 
@@ -198,9 +191,7 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Generating final answers for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Context:", context)
         kwargs['output_schema'] = finalize.FinalizeOutput
         return self.role_execute(batch, **kwargs)
     
@@ -242,9 +233,8 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Self-correcting answers for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
+            print("Current Answers:", current_answer)
+            print("Context:", context)
         kwargs['output_schema'] = self_correct.SelfCorrectOutput
         return self.role_execute(batch, **kwargs)
 
@@ -274,9 +264,6 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Rephrasing questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
         kwargs['output_schema'] = rephase_question.RephraseQuestionOutput
         return self.role_execute(batch, **kwargs)
 
@@ -305,9 +292,6 @@ class Generator(LLMAgent):
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Generating queries for questions:", question)
-            print("Batch size:", len(batch))
-            for i, x in enumerate(batch):
-                print(f"Batch {i}: {x}")
         kwargs['output_schema'] = decompose_and_answer.QueriesGenerationOutput
         return self.role_execute(batch, **kwargs)
 

@@ -11,6 +11,7 @@ import pydantic
 from litellm import completion
 from litellm.utils import supports_response_schema
 from tqdm import tqdm
+import litellm
 
 from agents.utils import convert_confidence_to_score, extract_info_from_text
 
@@ -69,7 +70,7 @@ class ModelClient:
                     output = output_schema.model_validate_json(choice.message.content) # type: ignore
                 except:
                     print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
-                    print(f"Raw content: {choice.message.content}") # type: ignore
+                    # print(f"Raw content: {choice.message.content}") # type: ignore
                     output = choice.message.content # type: ignore
             else:
                 output = choice.message.content # type: ignore
@@ -184,10 +185,13 @@ class OpenAIClient(ModelClient):
 class LLMAgent:
     def __init__(self, client_kwargs: Dict[str, Any], generate_kwargs: Dict[str, Any], 
                  use_cache: bool = True, cache_dir: str = './cache/llm_agents'):
+        client_kwargs = copy.deepcopy(client_kwargs)
         self.client_type = client_kwargs.pop('client_type', 'litellm')
         if self.client_type == 'litellm':
+            print("Using LiteLLMClient for LLM generation.")
             self.client = LiteLLMClient(**client_kwargs, **generate_kwargs)
         elif self.client_type == 'openai':
+            print("Using OpenAIClient for LLM generation.")
             self.client = OpenAIClient(**client_kwargs, **generate_kwargs)
         else:
             raise ValueError(f"Unsupported client type: {self.client_type}. Supported types are 'litellm' and 'openai'.")
@@ -294,12 +298,12 @@ class LLMAgent:
             results = []
             for item in response:
                 if self.verbose:
-                    print(f"Processing response for question {i}: {item}")
+                    print(f"Processing response {i}: {item}")
                 output_object = item.get('output', None)
                 if isinstance(output_object, output_schema):
                     extracted_info = output_object.model_dump()
                 else:
-                    print("Warning: Output is not of type AnswerOutput, received:", output_object)
+                    print(f"Warning: Output is not of type {output_schema}, received:", output_object)
                     print("Trying to parse with regex...")
                     # Attempt to parse the output using regex
                     keys = output_schema.model_fields.keys()

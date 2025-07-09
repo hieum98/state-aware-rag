@@ -66,7 +66,7 @@ def search(
         use_golden_answer: bool = False,
         save_tree: bool = False,
         save_dir: str = "mcts_trees",
-        verbose: bool = True,
+        verbose: bool = False,
 ):  
     # Initialize the MCTS searcher with the given exploration weight
     mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=False)
@@ -87,23 +87,26 @@ def search(
         user_question=user_question,
         verbose=verbose,
     )
-    solutions = []
     for i in tqdm.tqdm(range(num_rollouts), desc="MCTS Rollouts"):
         mcts_searcher.do_rollout(root_node)
         best_solution, scores, solution_nodes = find_best_solution(root_node, verbose=verbose)
-        best_solution['rollout_index'] = i  # Add the rollout index to the solution
-        solutions.append(best_solution)
         if verbose:
             print("**" * 20)
             print(f"Rollout {i+1}/{num_rollouts}")
-            i = 0
-            for node, score in zip(solution_nodes, scores):
-                print(f"Solution {i+1} with score {score}:")
-                node.print_node()
-                i += 1
             if best_solution is not None:
                 print("Best solution found:")
                 pprint.pprint(best_solution, indent=4, width=120)
+    
+    solutions = []
+    answers = []
+    for node in solution_nodes:
+        answers.append(node.state['node_content'])
+        solutions.append(node.get_node())
+    # Major voting to find the best solution from the solution nodes of the final tree
+    if len(answers) == 0:
+        print("No valid solution nodes found in the reasoning tree.")
+        final_answer = None
+    final_answer = evaluator.majority_vote(question=user_question, answers=answers)
     
     if save_tree:
         # Save all nodes of the tree
@@ -132,7 +135,7 @@ def search(
     if evaluator.use_cache:
         cache_dir = evaluator.cache_dir
         shutil.rmtree(cache_dir, ignore_errors=True)
-    return solutions
+    return final_answer, solutions
 
 
 if __name__ == "__main__":
@@ -217,7 +220,7 @@ if __name__ == "__main__":
 
     question = "In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?"
 
-    solution = search(
+    final_answer, solution = search(
         generator=generator,
         evaluator=evaluator,
         extractor=extractor,

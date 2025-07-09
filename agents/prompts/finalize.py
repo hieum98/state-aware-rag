@@ -27,7 +27,7 @@ class FinalizeOutput(pydantic.BaseModel):
     )
     answer: str = pydantic.Field(
         ...,
-        description="Direct answer to the question without any additional explanation or context.",
+        description="Direct answer to the question WITHOUT any additional explanation or context.",
     )
     confidence: str = pydantic.Field(
         ...,

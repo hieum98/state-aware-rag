@@ -213,8 +213,6 @@ class ReasoningNode(Node):
         external_information = []
         if extracted_retrieval_information['decision'] == 'relevant':
             external_information = extracted_retrieval_information['extracted_information']
-        if not external_information:
-            breakpoint()
         return external_information
     
     def update_memory(
@@ -529,10 +527,12 @@ class ReasoningNode(Node):
             raise ValueError(f"Invalid node type: {self.node_type}. Must be one of {list(NodeType)}.")
         
         if self.verbose:
-            print(f"Memory at depth: {self.depth}: \n{self.memory}")
+            print(f"Memory at depth: {self.depth}:")
+            print(self.memory)
         new_memory = self.update_memory(intermediate_conclusions=intermediate_conclusions, step_explored_information=explored_information)
         if self.verbose:
-            print(f"Updated memory at depth: {self.depth + 1}: \n{new_memory}")
+            print(f"Updated memory at depth: {self.depth + 1}:")
+            print(new_memory)
         for child in children:
             child.set_memory(new_memory)
         assert len(children) > 0, f"No children generated for node type: {self.print_node()}"

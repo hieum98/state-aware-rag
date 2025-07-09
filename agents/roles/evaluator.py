@@ -29,6 +29,9 @@ class Evaluator(LLMAgent):
         self.outcome_aware_prompt = evaluate.OUTCOME_AWARE_PROMPT
         self.outcome_aware_examples = None
 
+        self.majority_vote_prompt = evaluate.MAJORITY_VOTE_PROMPT
+        self.majority_vote_examples = None
+
     def evaluate_final_answer(
             self,
             question: Union[str, List[str]],
@@ -260,6 +263,7 @@ class Evaluator(LLMAgent):
             results.append(score)
         return results
 
+    # Modified from FlashRAG https://vscode.dev/github/RUC-NLPIR/FlashRAG/blob/main/flashrag/evaluator/metrics.py#L187
     def evaluate_with_em(self,
             correct_answer: Union[str, List[str], List[List[str]]],
             predicted_answer: Union[str, List[str]],
@@ -271,23 +275,56 @@ class Evaluator(LLMAgent):
         assert len(predicted_answer) == len(correct_answer), "The lengths of predicted_answer and correct_answer must match."
         em_scores = []  
         for pa, ca in zip(predicted_answer, correct_answer):
-            if isinstance(ca, list):
-                ca = ' '.join(ca)
-                ca = normalize_text(ca)
-                pa = normalize_text(pa)
-                if pa in ca or ca in pa:
-                    em_scores.append(1.0)
-                else:
-                    em_scores.append(0.0)
-            else:
-                ca = normalize_text(ca)
-                pa = normalize_text(pa)
-                if pa in ca or ca in pa:
-                    em_scores.append(1.0)
-                else:
-                    em_scores.append(0.0)
+            if isinstance(ca, str):
+                ca = [ca]
+            assert isinstance(pa, str), "predicted_answer must be a string."
+            pa = normalize_text(pa)
+            ca = [normalize_text(c) for c in ca]
+            score = 0.0
+            for item in ca:
+                if item in pa or pa in item:
+                    score = 1.0
+                    break
+            em_scores.append(score)
         return em_scores
 
+    def majority_vote(
+            self,
+            question: Union[str, List[str]],
+            answers: Union[str, List[str], List[List[str]]],
+            **kwargs: Any
+    ):
+        """
+        Evaluate the majority vote of answers for a given question.
+        """
+        if isinstance(question, str):
+            question = [question]
+            assert isinstance(answers, str), "answers must be a string when question is a string."
+            answers = [answers]
+        kwargs['n'] = 1
+        
+        assert len(question) == len(answers), "The lengths of question and answers must match."
+        
+        batch = [
+            self.majority_vote_prompt.format(
+                question=q,
+                answers=a,
+                examples=self.majority_vote_examples if self.majority_vote_examples else "Not provided."
+            )
+            for q, a in zip(question, answers)
+        ]
+        batch = [[{'role': 'user', 'content': x}] for x in batch]
+        if self.verbose:
+            print("Generating majority vote evaluations:")
+            print("Questions:", question)
+            print("Answers:", answers)
+        kwargs['output_schema'] = evaluate.MajorityVoteOutput
+        response = self.role_execute(batch, **kwargs)
+        results = []
+        for res in response:
+            answer = res.get("final_answer")
+            results.append(answer)
+        return results
 
 if __name__ == "__main__":
     online_model_kwargs = {

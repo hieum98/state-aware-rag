@@ -293,7 +293,22 @@ class Generator(LLMAgent):
         if self.verbose:
             print("Generating queries for questions:", question)
         kwargs['output_schema'] = decompose_and_answer.QueriesGenerationOutput
-        return self.role_execute(batch, **kwargs)
+        response = self.role_execute(batch, **kwargs)
+        output = []
+        for item in response:
+            if 'queries' in item:
+                queries = item['queries']
+                if isinstance(queries, str):
+                    queries = queries.strip().split(',\n')
+                    queries = [q.strip().strip('"') for q in queries]
+                    # Remove empty queries
+                    queries = [q for q in queries if q]
+                item['queries'] = queries
+            output.append(item)
+        if not output:
+            print("Empty response from the model. Please check!")
+            breakpoint()
+        return output
 
 if __name__ == "__main__":
     online_model_kwargs = {

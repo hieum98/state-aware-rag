@@ -201,6 +201,7 @@ class LLMAgent:
         os.makedirs(self.cache_dir, exist_ok=True)
     
     def save_to_cache(self, cache_file: str, responses: List[Dict[str, Any]]):
+        print(f"Saving responses to cache file: {cache_file}")
         with open(cache_file, 'w', encoding='utf-8') as f:
             to_save_data = []
             for item in responses:
@@ -227,6 +228,7 @@ class LLMAgent:
                     except:
                         print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
                         print(f"Raw content: {item['output']}")
+        print(f"Loaded responses from cache file: {cache_file}")
         return data
     
     def generate(self, input_args, **kwargs):
@@ -304,10 +306,13 @@ class LLMAgent:
                 else:
                     print(f"Warning: Output is not of type {output_schema}, received:", output_object)
                     print("Trying to parse with regex...")
-                    # Attempt to parse the output using regex
-                    keys = output_schema.model_fields.keys()
-                    value_types = [field.annotation.__name__ for field in output_schema.model_fields.values()]
-                    extracted_info = extract_info_from_text(output_object, keys, value_types)
+                    try:
+                        # Attempt to parse the output using regex
+                        keys = output_schema.model_fields.keys()
+                        value_types = [field.annotation.__name__ for field in output_schema.model_fields.values()]
+                        extracted_info = extract_info_from_text(output_object, keys, value_types)
+                    except:
+                        breakpoint()
                 if 'confidence' in extracted_info:
                     extracted_info['confidence'] = convert_confidence_to_score(extracted_info['confidence'])
                 results.append(extracted_info)

@@ -166,6 +166,34 @@ class OutcomeAwareOutput(pydantic.BaseModel):
         description="A detailed explanation of the conclusion quality, including correctness, soundness of reasoning, and any critical flaws."
     )
    
-        
 
+MAJORITY_VOTE_PROMPT = """You are an expert assistant specializing in evaluating the answers to questions. Given a question and a set of answers, your task is to determine the final answer based on majority voting.
 
+## Instructions:
+1. Question Analysis: Carefully read and understand the question. Identify key components and clarify what is being asked.
+2. Identify the underlying consensus: Determine the most frequent and correct answer, even if the wording varies across the different responses.
+3. Synthesize the final answer: Formulate a single, directed, consolidated, and accurate answer based on the majority consensus for the question.
+
+Here are some examples: {examples}
+
+Now, please evaluate the following question and answers:
+Question: {question}
+Answers: 
+{answers}
+"""
+
+class MajorityVoteOutput(pydantic.BaseModel):
+    final_answer: str = pydantic.Field(
+        ...,
+        description="The final answer determined by majority voting based on the provided answers."
+    )
+    confidence: Literal['high', 'medium', 'low'] = pydantic.Field(
+        ...,
+        pattern=r"^(high|medium|low)$",
+        description="The confidence level in the final answer, indicating how strongly the majority consensus supports it."
+    )
+    reasoning: str = pydantic.Field(
+        ...,
+        description="A detailed explanation of how the final answer was derived from the majority of the provided answers."
+    )
+    

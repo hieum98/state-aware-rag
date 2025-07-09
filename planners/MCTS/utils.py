@@ -125,6 +125,9 @@ def search(
                 node_content['reward'] = mcts_searcher.Q[node]
                 node_content['visits'] = mcts_searcher.N[node]
                 f.write(json.dumps(node_content) + "\n")
+    return final_answer, solutions
+
+def clear_agent_cache(generator, extractor, evaluator):
     # Clear the agent cache if it is used
     if generator.use_cache:
         cache_dir = generator.cache_dir
@@ -135,8 +138,6 @@ def search(
     if evaluator.use_cache:
         cache_dir = evaluator.cache_dir
         shutil.rmtree(cache_dir, ignore_errors=True)
-    return final_answer, solutions
-
 
 if __name__ == "__main__":
     # Example usage

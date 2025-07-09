@@ -201,6 +201,7 @@ class ReasoningNode(Node):
         if self.verbose:
             print(f"Exploring external knowledge base for sub-question: {sub_question}")
         queries_for_retriever = self.generator.generate_queries_for_retriever(question=sub_question)[0]['queries']
+        queries_for_retriever.append(user_question)  # Add the user question to the queries for retriever to prevent the case where the generated query is wrong or empty
         retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=2048, reranker_top_k=3)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
             retrieved_docs = sum(retrieved_docs, [])  # Flatten the list of lists
@@ -636,6 +637,14 @@ class ReasoningNode(Node):
             node['parent'] = hash(self.parent)
         path = self.get_path()
         reasoning_path, reasoning_scores = self.get_reasoning_trace(path)
+        full_reasoning_path = []
+        for i, n in enumerate(path):
+            node_state = copy.deepcopy(n.state)
+            node_state['node_type'] = n.node_type.value
+            node_state['depth'] = n.depth
+            node_state['memory'] = n.memory if n.memory else []
+            full_reasoning_path.append(node_state)
+        node['full_reasoning_path'] = full_reasoning_path
         node['reasoning_path'] = reasoning_path
         node['reasoning_scores'] = reasoning_scores
         return node

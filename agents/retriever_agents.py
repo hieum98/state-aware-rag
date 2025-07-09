@@ -2,8 +2,11 @@ import requests
 import json
 import time
 from typing import List, Union
-from flashrag.retriever.retriever import DenseRetriever
-from flashrag.retriever.index_builder import Index_Builder
+try:
+    from flashrag.retriever.retriever import DenseRetriever
+    from flashrag.retriever.index_builder import Index_Builder
+except ImportError:
+    print("FlashRAG package not found. Please install it using 'pip install flashrag' if you want to use the FlashRAG retriever agent.")
 
 
 class FlashRAGRetrieverAgent:
@@ -258,14 +261,14 @@ if __name__ == "__main__":
     #     use_sentence_transformer=True,
     # )
 
-    online_kwargs = {
-        "url": "http://n0998.talapas.uoregon.edu:5000/search",
-        "retrieval_topk": 32,
+    retriever_online_kwargs = {
+        "url": "http://ip-10-4-228-30:5000/search",
+        "retrieval_topk": 64,
         "query_instruction": "query: ",
     }
-    retriever_agent = RetrieverAgent(online_kwargs=online_kwargs)
+    retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    query = ["Who is the Chilean footballer who left Arsenal in 2018?", "Which team did Southampton FC beat in the 1976 FA Cup final?"]
+    query = ["What is the full title of the magazine referred to as 'Arthur's Magazine'?"]
     # query = "When was the Declaration of Independence signed?"
-    results = retriever_agent.search(query, top_k=32, instruction=None, reranker_top_k=5, reranker_instruction=None)
+    results = retriever_agent.search(query, top_k=5, instruction=None, reranker_top_k=6, reranker_instruction=None)
     breakpoint()

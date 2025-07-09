@@ -11,7 +11,6 @@ import pydantic
 from litellm import completion
 from litellm.utils import supports_response_schema
 from tqdm import tqdm
-import litellm
 
 from agents.utils import convert_confidence_to_score, extract_info_from_text
 

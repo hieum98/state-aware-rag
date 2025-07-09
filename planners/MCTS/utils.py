@@ -106,7 +106,7 @@ def search(
                 pprint.pprint(best_solution, indent=4, width=120)
     
     if save_tree:
-        # Save all nodes of the tree from the root node with BFS traversal
+        # Save all nodes of the tree
         nodes = []
         queue = [root_node]
         while queue:
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
+        'url': 'http://ip-10-4-228-30:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -165,29 +165,57 @@ if __name__ == "__main__":
         use_cache=True,
         cache_dir="mcts_cache/generator_cache",
     )
+    eval_kwargs = {
+        # For creative tasks (creative writing) set it ~ 1, 
+        # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
+        # For general conversation set it ~ 0.7
+        'temperature': 0.1,  
+        'n': 1, 
+        'top_p': 0.9,
+        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
+        # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
+        # For greedy decoding set it to 1
+        'top_k': 20,
+        'tensor_parallel_size': 1,
+        # 'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+    }
     evaluator = Evaluator(
         client_kwargs=online_model_kwargs, 
-        generate_kwargs=generate_kwargs, 
+        generate_kwargs=eval_kwargs, 
         # verbose=True,
         use_cache=True, 
         cache_dir="mcts_cache/evaluator_cache",
     )
+    extract_kwargs = {
+        # For creative tasks (creative writing) set it ~ 1, 
+        # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
+        # For general conversation set it ~ 0.7
+        'temperature': 0.1,  
+        'n': 1, 
+        'top_p': 0.9,
+        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
+        # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
+        # For greedy decoding set it to 1
+        'top_k': 20,
+        'tensor_parallel_size': 1,
+        # 'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+    }
     extractor = Extractor(
         client_kwargs=online_model_kwargs, 
-        generate_kwargs=generate_kwargs, 
+        generate_kwargs=extract_kwargs, 
         # verbose=True,
         use_cache=True,
         cache_dir="mcts_cache/extractor_cache",
     )
 
     retriever_online_kwargs = {
-        "url": "http://n0998.talapas.uoregon.edu:5000/search",
+        "url": "http://ip-10-4-228-30:5000/search",
         "retrieval_topk": 64,
         "query_instruction": "query: ",
     }
     retriever = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    question = "Which magazine was started first Arthur's Magazine or First for Women?"
+    question = "In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?"
 
     solution = search(
         generator=generator,
@@ -197,8 +225,8 @@ if __name__ == "__main__":
         # Question components
         user_question=question,
         question_id="example_question_1",
-        max_depth=15,
-        golden_answer=["Arthur's Magazine"],
+        max_depth=5,
+        golden_answer=["Alexis Sánchez"],
         # MCTS parameters
         num_rollouts=16,
         use_golden_answer=True,

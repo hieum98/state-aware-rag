@@ -45,7 +45,7 @@ if __name__ == "__main__":
         retrieved_docs = retriever.search(query, top_k=top_k, return_score=return_score, instruction=instruction)
         if reranker:
             reranker_top_k = data.get('reranker_top_k', top_k)
-            if reranker_top_k <= top_k:
+            if reranker_top_k < top_k:
                 docs = retrieved_docs['retrieved_docs']
                 assert len(query) == len(docs), "Query and documents length mismatch"
                 reranker_instruction = data.get('reranker_instruction', None)
@@ -59,5 +59,5 @@ if __name__ == "__main__":
     app.run(host='0.0.0.0', port=args.port, debug=False)
 
     # The Flask app will run and listen for incoming requests on port 5000.
-    # python -m servers.retriever --config path/to/config.yaml
+    # python -m servers.retriever --config path/to/config.yaml --reranker_model_name Qwen/Qwen3-Reranker-4B --max_length 8192 --num_gpus 1 --port 5000
 

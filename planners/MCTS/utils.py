@@ -5,95 +5,52 @@ import shutil
 from typing import List, Optional, TextIO, Union
 import tqdm
 from colorama import Fore, Style
+from anytree import RenderTree
 
 from planners.MCTS.backbone import MCTS
 from planners.MCTS.reasoning_node import *
 
 # Modified from https://vscode.dev/github/zhentingqi/rStar/blob/main/run_src/rstar_utils.py#L60-L120
-def print_tree_from_root(
-        mcts_searcher: MCTS, 
-        rollout_id: int, 
-        root_node: ReasoningNode, 
-        chosen_node: Optional[ReasoningNode] = None, 
-        file: Optional[TextIO] = None
-):
-    color_print = False if file else True
-
-    def my_print(text):
-        if file:
-            file.write(text + "\n")
-        else:
-            print(text)
-
-    def print_tree(
-            parent_node: ReasoningNode, 
-            node: ReasoningNode, 
-            rollout_id: int,
-            file: Optional[TextIO] = None, 
-            ):
-        to_print = ""
-
-        num_indent = 4
-        dash = "-" * num_indent * node.depth
-        space = " " * num_indent * node.depth
-
-        attributes = f"Q: {round(mcts_searcher.Q[node], 2)}" + "; " + f"N: {mcts_searcher.N[node]}" + "; "
-
-        # uct_value = "UCT: " + str(
-        #     round(mcts_searcher.uct(parent_node=parent_node, child_node=node), 2)
-        # )
-        # attributes += "; " + uct_value
-
-        solution_marker = "(T) " if node.is_terminal() else ""
-
-        node_info = "[" + solution_marker + node.__str__() + ": " + attributes + "]"
-        if chosen_node and node == chosen_node:
-            node_info = "[" + node_info + "]"
-        node_info += " "
-
-        if color_print and node.is_terminal():
-            node_details = Fore.RED + Style.BRIGHT + node_info + Fore.RESET + Style.RESET_ALL
-        else:
-            node_details = node_info
-
-        node_data = copy.deepcopy(node.get_node())
+def print_tree_from_root(root_node: ReasoningNode):
+    """
+    Print the reasoning tree from the root node.
+    """
+    for pre, _, node in RenderTree(root_node):
+        node_data = node.get_node()
+        node_id = node.__str__()
         if node.node_type is NodeType.USER_QUESTION:
             gt = node_data.get('golden_answer', 'N/A')
             user_question = node_data['user_question'].replace('\n', ' ').replace('\r', ' ')
-            node_details += f"User: {user_question}" + "\n" + space + " " * len(node_info) + f"Ground truth: {gt}"
+            node_details = f"User: {user_question} - Ground truth: {gt}"
+            node_details = f"{Fore.GREEN}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.REPHASED_QUESTION_NODE:
             rephased_question = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
-            node_details += f"Rephase: {rephased_question}"
+            node_details = f"Rephase: {rephased_question}"
+            node_details = f"{Fore.YELLOW}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.FINAL_ANSWER:
             final_answer = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details += f"Final: {final_answer} - Conf: {confidence}"
+            node_details = f"Final: {final_answer} - Conf: {confidence}"
+            node_details = f"{Fore.BLUE}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SELF_CORRECTED_NODE:
             corrected_answer = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details += f"Self_corrected: {corrected_answer} - Conf: {confidence}"
+            node_details = f"Self_corrected: {corrected_answer} - Conf: {confidence}"
+            node_details = f"{Fore.MAGENTA}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SUB_QA_NODE:
             sub_question = node_data['sub_question'].replace('\n', ' ').replace('\r', ' ')
             sub_answer = node_data['sub_answer'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details += f"Sub_Q: {sub_question} - Sub_A: {sub_answer} - Conf: {confidence}"
+            node_details = f"Sub_Q: {sub_question} - Sub_A: {sub_answer} - Conf: {confidence}"
+            node_details = f"{Fore.CYAN}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SYNTHESIS_NODE:
             synthesis_reasoning = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details += f"Synthesis: {synthesis_reasoning} - Conf: {confidence}"
-
-        to_print += dash + node_details
-
-        my_print(to_print)
-
-        for child in node.children:
-            print_tree(node, child, file, rollout_id)
-
-        if node.depth == 0:
-            my_print("\n" + "=" * 50 + "\n")
-
-    print_tree(parent_node=None, node=root_node, file=file, rollout_id=rollout_id)
-
+            node_details = f"Synthesis: {synthesis_reasoning} - Conf: {confidence}"
+            node_details = f"{Fore.RED}{node_id}{Style.RESET_ALL} {node_details}"
+ 
+        tree_str = f"{pre}{node_details}"
+        print(tree_str)
 
 def find_valid_solution_nodes(node: ReasoningNode) -> list[ReasoningNode]:
     """
@@ -176,11 +133,7 @@ def search(
     )
     for i in range(num_rollouts):
         simulated_node = mcts_searcher.do_rollout(root_node)
-        print_tree_from_root(
-            mcts_searcher=mcts_searcher, 
-            rollout_id=i, 
-            root_node=root_node,
-        )
+        print_tree_from_root(root_node)
         breakpoint()
         best_solution, scores, solution_nodes = find_best_solution(root_node, verbose=verbose)
         if verbose:

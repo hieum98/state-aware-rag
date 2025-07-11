@@ -6,6 +6,7 @@ from hashlib import sha256
 from typing import List, Optional, Tuple, Union
 import tqdm
 import pprint
+from anytree import NodeMixin
 
 from planners.MCTS.backbone import MCTS, Node
 from agents.roles.generator import Generator
@@ -33,7 +34,7 @@ class NodeType(Enum):
 
 
 
-class ReasoningNode(Node):
+class ReasoningNode(Node, NodeMixin):
     """
     A node in the MCTS tree that represents a reasoning step.
     """
@@ -75,7 +76,7 @@ class ReasoningNode(Node):
         self.verbose = verbose  # Whether to print verbose output
         self.parent = parent # Parent node in the MCTS tree, if none, this is the root node
         self.children: List["ReasoningNode"] = [] # Children nodes in the MCTS tree
-        self.depth = depth
+        self.tree_depth = depth
         self.node_type = node_type
         # Node's agent components
         self.generator = generator
@@ -285,7 +286,7 @@ class ReasoningNode(Node):
             node = ReasoningNode(
                 parent=self,
                 node_type=NodeType.FINAL_ANSWER,
-                depth=self.depth + 1,
+                depth=self.tree_depth + 1,
                 answer=answer,
                 confidence=item['confidence'],
                 **self.node_config
@@ -331,7 +332,7 @@ class ReasoningNode(Node):
                 node = ReasoningNode(
                     parent=self,
                     node_type=NodeType.SUB_QA_NODE,
-                    depth=self.depth + 1,
+                    depth=self.tree_depth + 1,
                     question=sub_question,
                     answer=answer,
                     confidence=item['confidence'],
@@ -385,7 +386,7 @@ class ReasoningNode(Node):
                     node = ReasoningNode(
                         parent=self,
                         node_type=NodeType.SUB_QA_NODE,
-                        depth=self.depth + 1,
+                        depth=self.tree_depth + 1,
                         question=sub_question,
                         answer=f"{answer['detailed_answer']}.\nReasoning: {answer['reasoning']}",
                         confidence=answer['confidence'],
@@ -410,7 +411,7 @@ class ReasoningNode(Node):
         node = ReasoningNode(
             parent=self,
             node_type=NodeType.REPHASED_QUESTION_NODE,
-            depth=self.depth + 1,
+            depth=self.tree_depth + 1,
             question=response['rephrased_question'],
             confidence=1.0,  # Default confidence is 1.0 for REPHASE_QUESTION nodes
             **self.node_config
@@ -451,7 +452,7 @@ class ReasoningNode(Node):
             node = ReasoningNode(
                 parent=self,
                 node_type=NodeType.SELF_CORRECTED_NODE,
-                depth=self.depth + 1,
+                depth=self.tree_depth + 1,
                 question=sub_question,
                 answer=f"{item['reanswer']}.\nReasoning: {item['reasoning']}",
                 confidence=item['confidence'],
@@ -493,7 +494,7 @@ class ReasoningNode(Node):
                 node = ReasoningNode(
                     parent=self,
                     node_type=NodeType.FINAL_ANSWER,
-                    depth=self.depth + 1,
+                    depth=self.tree_depth + 1,
                     answer=item['synthesis'],
                     confidence=item['confidence'],
                     **self.node_config
@@ -502,7 +503,7 @@ class ReasoningNode(Node):
                 node = ReasoningNode(
                     parent=self,
                     node_type=NodeType.SYNTHESIS_NODE,
-                    depth=self.depth + 1,
+                    depth=self.tree_depth + 1,
                     reasoning=item['synthesis'],
                     confidence=item['confidence'],
                     **self.node_config
@@ -510,7 +511,7 @@ class ReasoningNode(Node):
             nodes.append(node)
         return nodes
 
-    def find_children(self):
+    def generate_children(self):
         """
         Find and generate children nodes based on the current node type.
         Returns:
@@ -518,7 +519,7 @@ class ReasoningNode(Node):
         """
         explored_information = []
         intermediate_conclusions = []
-        if self.depth == self.node_config['max_depth'] - 1:
+        if self.tree_depth == self.node_config['max_depth'] - 1:
             # If the maximum depth is reached, generate a final answer node
             final_answer_nodes, external_information = self.generate_final_answer_node()
             explored_information += external_information
@@ -567,18 +568,26 @@ class ReasoningNode(Node):
             raise ValueError(f"Invalid node type: {self.node_type}. Must be one of {list(NodeType)}.")
         
         if self.verbose:
-            print(f"Memory at depth: {self.depth}:")
+            print(f"Memory at depth: {self.tree_depth}:")
             print(self.memory)
         new_memory = self.update_memory(intermediate_conclusions=intermediate_conclusions, step_explored_information=explored_information)
-        if self.verbose:
-            print(f"Updated memory at depth: {self.depth + 1}:")
-            print(new_memory)
-        for child in children:
-            child.set_memory(new_memory)
+        # if self.verbose:
+        #     print(f"Updated memory at depth: {self.tree_depth + 1}:")
+        #     print(new_memory)
+        # for child in children:
+        #     child.set_memory(new_memory)
         assert len(children) > 0, f"No children generated for node type: {self.print_node()}"
-        self.children = children
         return children, new_memory
     
+    def find_children(self):
+        if self.children:
+            return self.children
+        children, new_memory = self.generate_children()
+        self.children = children
+        for child in self.children:
+            child.set_memory(new_memory)
+        return self.children
+
     def is_valid_leaf(self) -> bool:
         """
         Check if the current node is a valid leaf node.
@@ -590,7 +599,7 @@ class ReasoningNode(Node):
         return False
     
     def is_terminal(self) -> bool:
-        return self.depth > self.node_config['max_depth'] or self.is_valid_leaf()
+        return self.tree_depth > self.node_config['max_depth'] or self.is_valid_leaf()
     
     def reward(self) -> float:
         """
@@ -623,19 +632,12 @@ class ReasoningNode(Node):
         else:
             reward = reasoning_side_reward
         return reward
-    
-    def find_random_child(self):
-        if self.is_terminal():
-            return None  # If the node is terminal, return None
-        node_children, _ = self.find_children()
-        random_child = random.choice(node_children) if node_children else None
-        return random_child  # Return a random child node, or None if there are no children
         
     def __hash__(self):
         node = copy.deepcopy(self.state)
         node['memory'] = self.memory if self.memory else [] 
         node['node_type'] = self.node_type.value
-        node['depth'] = self.depth
+        node['depth'] = self.tree_depth
         if self.parent is None:
             return  0  # If the node has no parent, return 0 as the hash value
         else:
@@ -657,7 +659,7 @@ class ReasoningNode(Node):
             return False
         same_hash = hash(self) == hash(other)
         same_type = self.node_type == other.node_type
-        same_depth = self.depth == other.depth
+        same_depth = self.tree_depth == other.depth
         return same_hash and same_type and same_depth
     
     def __str__(self):
@@ -675,7 +677,7 @@ class ReasoningNode(Node):
         node['user_question'] = self.node_config['user_question']
         node['golden_answer'] = self.node_config['golden_answer']
         node['node_type'] = self.node_type.value
-        node['depth'] = self.depth
+        node['depth'] = self.tree_depth
         if self.parent is None:
             node['parent'] = None
         else:

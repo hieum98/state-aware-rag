@@ -25,32 +25,27 @@ class Extractor(LLMAgent):
     def extract(
             self, 
             question: Union[str, List[str]],
-            current_step_objective: Union[str, List[str]],
             document: Union[str, List[str]],
             **kwargs
     ):
         if isinstance(question, str):
             question = [question]
-            assert isinstance(current_step_objective, str), "current_step_objective must be a string when question is a string"
             assert isinstance(document, str), "document must be a string when question is a string"
-            current_step_objective = [current_step_objective]
             document = [document]
         kwargs['n'] = 1 # Always generate one response
-        assert len(question) == len(current_step_objective) == len(document), "question, current_step_objective, and document must have the same length"
+        assert len(question) == len(document), "question, current_step_objective, and document must have the same length"
 
         batch = [
             self.extract_prompt.format(
                 question=q,
-                current_step_objective=co,
                 document=d,
                 examples=self.extract_examples if self.extract_examples else "No examples provided."
-            ) for q, co, d in zip(question, current_step_objective, document)
+            ) for q, d in zip(question, document)
         ]
         batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
         if self.verbose:
             print("Generating extractions for questions:")
             print("Questions:", question)
-            print("Current Step Objectives:", current_step_objective)
             print("Documents:", document)
         kwargs['output_schema'] = extract.ExtractOutput
         responses = self.role_execute(batch, **kwargs)
@@ -58,9 +53,13 @@ class Extractor(LLMAgent):
         for response in responses:
             decision = response['decision']
             try:
+                # if isinstance(response['information'], list):
+                #     info = [f"{x['extracted_information']}" 
+                #             for x in response['information']]
+                # else:
+                #     info = [response['information']]
                 if isinstance(response['information'], list):
-                    info = [f"Information: {x['summary']}\nDetail: {x['extracted_information']}" 
-                            for x in response['information']]
+                    info = response['information']
                 else:
                     info = [response['information']]
             except:
@@ -113,6 +112,6 @@ if __name__ == "__main__":
 
     document = f"Document 1: {document}\n\nDocument 2: {document_2}\n\nDocument 3: {document_3}\n\nDocument 4: {document_4}"
 
-    results = generator.extract(question=question, current_step_objective=current_step_objective, document=document_4)
+    results = generator.extract(question=question, document=document_4)
     breakpoint()
 

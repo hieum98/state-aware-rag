@@ -21,9 +21,10 @@ def generate_answer(
         retriever: RetrieverAgent,
         # Optional parameters
         question_id: Optional[str] = None,
-        goden_answer: Optional[Union[str, List[str]]] = None,
+        golden_answer: Optional[Union[str, List[str]]] = None,
         config: Optional[MCTSArguments] = None
     ):
+    # breakpoint()
     final_answer, solutions = search(
         generator=generator,
         evaluator=evaluator,
@@ -32,7 +33,7 @@ def generate_answer(
         # Question components
         user_question=question,
         question_id=question_id,
-        golden_answer=goden_answer,
+        golden_answer=golden_answer,
         # MCTS parameters
         max_depth=config.max_depth if config else 15,
         num_rollouts=config.num_rollouts if config else 100,
@@ -113,6 +114,7 @@ if __name__ == "__main__":
             dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', '2wikimultihopqa', split='dev')
             # Randomly select 1000 samples from the dataset for testing
             dataset = dataset.shuffle(seed=42).select(range(1000))
+        # breakpoint()
         dataset = dataset.map(lambda x: generate_answer(
             question=x['question'],
             generator=generator,
@@ -120,9 +122,9 @@ if __name__ == "__main__":
             extractor=extractor,
             retriever=retriever,
             question_id=f"{args.data_name}_{x['id']}",
-            goden_answer=False,
+            golden_answer=x['golden_answers'],
             config=mcts_args
-            ))
+            ), num_proc=8)
     
     clear_agent_cache(generator, extractor, evaluator)
 

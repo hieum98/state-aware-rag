@@ -299,7 +299,6 @@ class Evaluator(LLMAgent):
         """
         if isinstance(question, str):
             question = [question]
-            assert isinstance(answers, str), "answers must be a string when question is a string."
             answers = [answers]
         kwargs['n'] = 1
         

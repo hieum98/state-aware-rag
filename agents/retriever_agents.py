@@ -262,13 +262,13 @@ if __name__ == "__main__":
     # )
 
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-228-30:5000/search",
+        "url": "http://n0998:5000/search",
         "retrieval_topk": 64,
         "query_instruction": "query: ",
     }
     retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    query = ["What is the full title of the magazine referred to as 'Arthur's Magazine'?"]
+    query = ["Who directed the film Breakup Buddies?"]
     # query = "When was the Declaration of Independence signed?"
     results = retriever_agent.search(query, top_k=5, instruction=None, reranker_top_k=6, reranker_instruction=None)
     breakpoint()

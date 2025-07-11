@@ -54,8 +54,28 @@ class ModelClient:
             else:
                 print(f"Model {self.model_name} does not support structured output. Ignoring output schema.")
         model_kwargs = self.prepare_model_kwargs(**kwargs)
+        flag = True
+        i = 0
+        # Retry logic for handling till the response is valid
+        while flag:
+            response = self.completion(messages=messages, **model_kwargs)
+            # If the response is None or any choice is None or empty, retry
+            if response is None:
+                continue
+            if not hasattr(response, 'choices') or not response.choices:
+                continue
+            check_valid = []
+            for choice in response.choices:
+                if choice.message.content in [None, '', ' ', 'null']:
+                    check_valid.append(False)
+                    break
+                check_valid.append(True)
+            if all(check_valid):
+                flag = False
+            i += 1
+            if i > 10:  # Retry limit
+                print("Retry limit reached. Returning empty response.")
 
-        response = self.completion(messages=messages, **model_kwargs)
         all_outputs = []
         for choice in response.choices: # type: ignore
             reasoning = None
@@ -68,7 +88,8 @@ class ModelClient:
                 try:
                     output = output_schema.model_validate_json(choice.message.content) # type: ignore
                 except:
-                    print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
+                    # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
+                    # print(f"Output schema: {choice.message.content}")
                     # print(f"Raw content: {choice.message.content}") # type: ignore
                     output = choice.message.content # type: ignore
             else:
@@ -85,7 +106,7 @@ class ModelClient:
         generate_fn = partial(self.generate, **kwargs)
         with ThreadPool(max_workers=num_workers) as pool:
             future = pool.map(generate_fn, batch)
-            outputs = list(tqdm(future.result(), total=len(batch), desc=f"Generating responses from {self.model_name}"))
+            outputs = list(future.result())
         assert len(outputs) == len(batch), "Batch generation did not return the expected number of outputs."
         outputs = sorted(outputs, key=lambda x: x[0])  # Sort by index
         return [output[1] for output in outputs]  # Return only the outputs
@@ -201,7 +222,7 @@ class LLMAgent:
         os.makedirs(self.cache_dir, exist_ok=True)
     
     def save_to_cache(self, cache_file: str, responses: List[Dict[str, Any]]):
-        print(f"Saving responses to cache file: {cache_file}")
+        # print(f"Saving responses to cache file: {cache_file}")
         with open(cache_file, 'w', encoding='utf-8') as f:
             to_save_data = []
             for item in responses:
@@ -226,9 +247,10 @@ class LLMAgent:
                     try:
                         item['output'] = output_schema.model_validate(item['output'])
                     except:
-                        print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
-                        print(f"Raw content: {item['output']}")
-        print(f"Loaded responses from cache file: {cache_file}")
+                        # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
+                        # print(f"Raw content: {item['output']}")
+                        pass
+        # print(f"Loaded responses from cache file: {cache_file}")
         return data
     
     def generate(self, input_args, **kwargs):
@@ -304,15 +326,16 @@ class LLMAgent:
                 if isinstance(output_object, output_schema):
                     extracted_info = output_object.model_dump()
                 else:
-                    print(f"Warning: Output is not of type {output_schema}, received:", output_object)
-                    print("Trying to parse with regex...")
+                    # print(f"Warning: Output is not of type {output_schema}, received:", output_object)
+                    # print("Trying to parse with regex...")
                     try:
                         # Attempt to parse the output using regex
                         keys = output_schema.model_fields.keys()
                         value_types = [field.annotation.__name__ for field in output_schema.model_fields.values()]
                         extracted_info = extract_info_from_text(output_object, keys, value_types)
                     except:
-                        breakpoint()
+                        # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
+                        extracted_info = {'output': output_object}
                 if 'confidence' in extracted_info:
                     extracted_info['confidence'] = convert_confidence_to_score(extracted_info['confidence'])
                 results.append(extracted_info)

@@ -133,7 +133,8 @@ class MCTS:
             return # Already expanded
         if node.is_terminal():
             return # Terminal node, no children to expand
-        self.children[node] = node.find_children()
+        children, _ = node.find_children()
+        self.children[node] = children
         if self.verbose:
             print(f"Expanding node:")
             node.print_node()

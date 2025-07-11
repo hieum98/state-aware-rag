@@ -54,7 +54,7 @@ ANSWER_PROMPT = """You are an expert assistant specializing in precise, well-rea
 ## Instructions:
 1. **Question Analysis:** Carefully read and understand the question. Identify key components and clarify what is being asked.
 2. **Context Utilization:**  If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
-3. **Information Gap Identification:** If the context does not fully answer the question, identify missing information. Formulate specific follow-up queries that would help fill these gaps. Attempt to answer these queries based on your own knowledge.
+3. **Information Gap Identification:** If the context does not fully answer the question, identify missing information. Formulate specific follow-up queries that would help fill these gaps. Attempt to answer these queries based on your own knowledge. If you use your own knowledge to answer the question, you should set the confidence level to 'low'.
 
 Here are some examples: {examples}
 
@@ -88,7 +88,7 @@ GENERATE_QUERIES_FOR_RETRIEVER = """"You are a highly advanced Reasoning Engine.
 
 ## Guiding Principles for Queries
 1. The Zero-Synthesis Principle (Most Important): You MUST NOT introduce any new information, entities, or concepts that are not explicitly present in the original Input.
-2. Fully Self-Contained: The query must be completely understandable without any external context, including the original Input or other queries.
+2. Fully Self-Contained: The query MUST BE SELF-CONTAINED, meaning it should be understandable and answerable without needing to refer to the original Input, other queries, or any external context. It should not rely on any anaphoric references or ambiguous terms 
 3. Atomic: Each query must ask for one single, indivisible fact. Deconstruct questions containing conjunctions ("and", "or") or multiple attributes into separate queries.
 4. Essential & Non-Redundant: Every query must be necessary for the final answer, and must seek a unique piece of information not covered by other queries.
 
@@ -97,6 +97,7 @@ GENERATE_QUERIES_FOR_RETRIEVER = """"You are a highly advanced Reasoning Engine.
     - If the input is a question: Identify its type (e.g., factual, comparative, causal, temporal), key entities, and the required reasoning steps. 
     - If the input is a statement: Deconstruct it into its core, verifiable claims. Identify the key entities and the asserted relationships between them. Note that, a statement can be a declarative sentence, a claim, or a QA pair. If the input is a QA pair, treat it as a statement with an implied question.
 2. Generate Strategic Queries: Formulate a list of search queries to resolve the Input. Each query is a building block to reach the final answer that follows the guiding principles above. Do not try to replace them with the "answer" you think they represent. The goal is to provide the user with all the search components they would need to solve the problem from scratch.
+3. Ensure Self-Containment: Each query must be understandable and answerable on its own. Check that no query relies on the original Input, other queries, or any external context. 
 
 ## Examples:
 {examples}

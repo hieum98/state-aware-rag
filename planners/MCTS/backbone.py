@@ -174,7 +174,7 @@ class MCTS:
             for i, n in enumerate(path + simulated_path):
                 print(f"Simulated Step {i}:")
                 n.print_node()
-        breakpoint()  # Debugging point to inspect the simulated path
+                
         reward = simulated_node.reward()
         if self.verbose:
             print(f"Reward for the simulated node: {reward}")

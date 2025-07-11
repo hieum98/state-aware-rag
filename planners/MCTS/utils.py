@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import pprint
 import shutil
 from typing import List, Optional, TextIO, Union
 import tqdm
@@ -113,7 +114,7 @@ def search(
         verbose: bool = False,
 ):  
     # Initialize the MCTS searcher with the given exploration weight
-    mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=verbose)
+    mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=False)
 
     # Start the search from the root node
     root_node = ReasoningNode(
@@ -133,8 +134,8 @@ def search(
     )
     for i in range(num_rollouts):
         simulated_node = mcts_searcher.do_rollout(root_node)
-        print_tree_from_root(root_node)
-        breakpoint()
+        if verbose:
+            print_tree_from_root(root_node)
         best_solution, scores, solution_nodes = find_best_solution(root_node, verbose=verbose)
         if verbose:
             print("**" * 20)
@@ -142,12 +143,14 @@ def search(
             if best_solution is not None:
                 print("Best solution found:")
                 pprint.pprint(best_solution, indent=4, width=120)
-    
+    nodes = []
     solutions = []
     answers = []
-    for node in solution_nodes:
-        answers.append(node.state['node_content'])
-        solutions.append(node.get_node())
+    for _, _, node in RenderTree(root_node):
+        nodes.append(node)
+        if node.node_type is NodeType.FINAL_ANSWER:
+            answers.append(node.state['node_content'])
+            solutions.append(node.get_node())
     # Major voting to find the best solution from the solution nodes of the final tree
     if len(answers) == 0:
         print("No valid solution nodes found in the reasoning tree.")
@@ -155,14 +158,6 @@ def search(
     final_answer = evaluator.majority_vote(question=user_question, answers=answers)
     
     if save_tree:
-        # Save all nodes of the tree
-        nodes = []
-        queue = [root_node]
-        while queue:
-            current_node = queue.pop(0)
-            nodes.append(current_node)
-            for child in current_node.children:
-                queue.append(child)
         # check if the save directory does not exist, create it
         os.makedirs(save_dir, exist_ok=True)
         with open(f"{save_dir}/mcts_tree_ {question_id}.jsonl", 'w') as f:
@@ -286,3 +281,4 @@ if __name__ == "__main__":
         save_dir="mcts_data",
         verbose=True,
     )
+    breakpoint()  # Debugging point to inspect the final answer and solution

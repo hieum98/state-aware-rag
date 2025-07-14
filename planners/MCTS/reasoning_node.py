@@ -351,9 +351,9 @@ class ReasoningNode(Node, NodeMixin):
             if self.verbose:
                 print(f"Important information for generating sub-question: {memory_data}")
             subquestion_respones = self.generator.generate_subquestion(question=user_question, context=memory_data)
-            answerable_main_question = [item['answerable_main_question'] for item in subquestion_respones]
+            answerable_main_question = [item['answerable_main_question'] for item in subquestion_respones if item['answerable_main_question'] is not None]
             # Majority voting for answerable main question
-            answerable_sub_questions = sum(answerable_main_question) / len(answerable_main_question) 
+            answerable_sub_questions = sum(answerable_main_question) / len(answerable_main_question) if len(answerable_main_question) > 0 else 0.0
             if answerable_sub_questions > 0.5:
                 return self.generate_final_answer_node()  # If the answerable sub-question is more than 50%, generate direct answer node
             else:

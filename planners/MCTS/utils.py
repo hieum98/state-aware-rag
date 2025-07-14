@@ -273,7 +273,7 @@ if __name__ == "__main__":
         user_question=question,
         question_id="example_question_1",
         max_depth=7,
-        golden_answer=None,
+        golden_answer="",
         # MCTS parameters
         num_rollouts=16,
         use_golden_answer=False,

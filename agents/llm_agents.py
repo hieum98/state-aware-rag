@@ -22,11 +22,13 @@ class ModelClient:
             url: str, 
             api_key: Union[str, None] = None,
             concurrency: int = 64,
+            aws_profile_name: Union[str, None] = None,
             **generate_kwargs: Dict[str, Any]
             ):
         self.model_name = model_name
         self.url = url
         self.api_key = api_key
+        self.aws_profile_name = aws_profile_name
         self.concurrency = concurrency
 
         ## Generate kwargs
@@ -143,6 +145,7 @@ class LiteLLMClient(ModelClient):
             "base_url": self.url,
             "response_format": output_schema,
             'reasoning_effort': reasoning_effort,
+            'aws_profile_name': kwargs.get('aws_profile_name', self.aws_profile_name),
         }
         return model_kwargs
     
@@ -349,9 +352,11 @@ if __name__ == "__main__":
     ## Deploy the llm server via sglang
     ## python -m sglang.launch_server --host 0.0.0.0 --model-path Qwen/Qwen3-8B --reasoning-parser qwen3 # --port 30000 
     online_model_kwargs = {
+        # 'model_name': 'bedrock/us.anthropic.claude-opus-4-20250514-v1:0',
         'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
         'url': None,  # Use default URL for the model
         'api_key': None,  # Set your API key if required
+        'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
         # 'model_name': 'openai/qwen3-8B', 
         # 'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
         # 'api_key': 'your_api_key_here',  # Replace with your actual API key

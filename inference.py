@@ -42,7 +42,7 @@ def generate_answer(
         save_dir=config.save_dir if config else "mcts_data"
     )
     return {
-        "final_answer": final_answer,
+        "pred": final_answer,
         "solutions": solutions
     }
 

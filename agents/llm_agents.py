@@ -48,7 +48,7 @@ class ModelClient:
 
     def generate(self, input_args,  **kwargs):
         messages, index = input_args
-        should_return_reasoning = kwargs.get('should_return_reasoning', False)
+        should_return_reasoning = kwargs.get('should_return_reasoning', True)
         output_schema = kwargs.get('output_schema', None)
         if output_schema is not None:
             if self.structure_output_supported:
@@ -89,16 +89,20 @@ class ModelClient:
             if output_schema is not None:
                 try:
                     output = output_schema.model_validate_json(choice.message.content) # type: ignore
+                    is_valid = True
                 except:
                     # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
                     # print(f"Output schema: {choice.message.content}")
                     # print(f"Raw content: {choice.message.content}") # type: ignore
                     output = choice.message.content # type: ignore
+                    is_valid = False
             else:
                 output = choice.message.content # type: ignore
+                is_valid = True
             all_outputs.append({
                 'output': output,
                 'reasoning': reasoning,
+                'is_valid': is_valid,
             })
         return index, all_outputs
     
@@ -224,22 +228,27 @@ class LLMAgent:
         # Ensure cache directory exists
         os.makedirs(self.cache_dir, exist_ok=True)
     
-    def save_to_cache(self, cache_file: str, responses: List[Dict[str, Any]]):
+    def save_to_cache(self, cache_file: str, responses: List[Dict[str, Any]], input=None):
         # print(f"Saving responses to cache file: {cache_file}")
-        with open(cache_file, 'w', encoding='utf-8') as f:
-            to_save_data = []
-            for item in responses:
-                if isinstance(item['output'], pydantic.BaseModel):
-                    to_save_data.append({
-                        'output': item['output'].model_dump(),
-                        'reasoning': item['reasoning']
-                    })
-                else:
-                    to_save_data.append({
-                        'output': item['output'],
-                        'reasoning': item['reasoning']
-                    })
-            json.dump(to_save_data, f, indent=4)
+        to_save_data = []
+        for item in responses:
+            if not item['is_valid']:
+                continue  # Skip invalid responses
+            if isinstance(item['output'], pydantic.BaseModel):
+                to_save_data.append({
+                    'output': item['output'].model_dump(),
+                    'reasoning': item['reasoning'],
+                    'input': input 
+                })
+            else:
+                to_save_data.append({
+                    'output': item['output'],
+                    'reasoning': item['reasoning'],
+                    'input': input  # Save the input for debugging
+                })
+        if to_save_data: # Only save if there is valid data
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(to_save_data, f, indent=4)
     
     def load_from_cache(self, cache_file: str, output_schema) -> List[Dict[str, Any]]:
         with open(cache_file, 'r', encoding='utf-8') as f:
@@ -271,7 +280,7 @@ class LLMAgent:
             return index, response
         except FileNotFoundError:
             index, response = self.client.generate(input_args, **kwargs)
-            self.save_to_cache(cache_file, response)
+            self.save_to_cache(cache_file, response, input=messages)
             return index, response
         
     def batch_generate(self, batch_messages: List[List[Dict[str, str]]], **kwargs):
@@ -296,8 +305,8 @@ class LLMAgent:
             index = [item[1] for item in to_compute_responses]
             cache_files = [item[2] for item in to_compute_responses]
             responses = self.client.batch_generate(messages, **kwargs)
-            for i, response, cache_file in zip(index, responses, cache_files):
-                self.save_to_cache(cache_file, response)
+            for i, response, cache_file, m in zip(index, responses, cache_files, messages):
+                self.save_to_cache(cache_file, response, m)
                 cached_responses.append((i, response))
         cached_responses = sorted(cached_responses, key=lambda x: x[0])
         assert len(cached_responses) == len(batch_messages), "Batch generation did not return the expected number of outputs."
@@ -329,10 +338,7 @@ class LLMAgent:
                 if isinstance(output_object, output_schema):
                     extracted_info = output_object.model_dump()
                 else:
-                    # print(f"Warning: Output is not of type {output_schema}, received:", output_object)
-                    # print("Trying to parse with regex...")
                     try:
-                        # Attempt to parse the output using regex
                         keys = output_schema.model_fields.keys()
                         value_types = [field.annotation.__name__ for field in output_schema.model_fields.values()]
                         extracted_info = extract_info_from_text(output_object, keys, value_types)
@@ -353,14 +359,14 @@ if __name__ == "__main__":
     ## python -m sglang.launch_server --host 0.0.0.0 --model-path Qwen/Qwen3-8B --reasoning-parser qwen3 # --port 30000 
     online_model_kwargs = {
         # 'model_name': 'bedrock/us.anthropic.claude-opus-4-20250514-v1:0',
-        'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'url': None,  # Use default URL for the model
-        'api_key': None,  # Set your API key if required
-        'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
-        # 'model_name': 'openai/qwen3-8B', 
-        # 'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
-        # 'api_key': 'your_api_key_here',  # Replace with your actual API key
-        # 'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
+        # 'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        # 'url': None,  # Use default URL for the model
+        # 'api_key': None,  # Set your API key if required
+        # 'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
+        'model_name': 'openai/qwen3-8B', 
+        'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
+        'api_key': 'your_api_key_here',  # Replace with your actual API key
+        'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
     }
     generate_kwargs = {
@@ -368,7 +374,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 1,  
-        'n': 1, 
+        'n': 3, 
         'top_p': 0.9,
         'max_tokens': 4096,  
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -379,7 +385,7 @@ if __name__ == "__main__":
     }
     client = LLMAgent(client_kwargs=online_model_kwargs, generate_kwargs=generate_kwargs)
 
-    question = "In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?"
+    question = "Who is the current president of the United States?"
     questions = [
         'Who is the current president of the United States?',
         'What is the capital of France?',

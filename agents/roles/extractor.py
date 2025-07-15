@@ -27,12 +27,13 @@ class Extractor(LLMAgent):
             question: Union[str, List[str]],
             document: Union[str, List[str]],
             **kwargs
-    ):
+    ):  
+        if isinstance(question, list) and len(question) > 1:
+            kwargs['n'] = 1 # Always generate one response
         if isinstance(question, str):
             question = [question]
             assert isinstance(document, str), "document must be a string when question is a string"
             document = [document]
-        kwargs['n'] = 1 # Always generate one response
         assert len(question) == len(document), "question, current_step_objective, and document must have the same length"
 
         batch = [
@@ -53,11 +54,6 @@ class Extractor(LLMAgent):
         for response in responses:
             decision = response['decision']
             try:
-                # if isinstance(response['information'], list):
-                #     info = [f"{x['extracted_information']}" 
-                #             for x in response['information']]
-                # else:
-                #     info = [response['information']]
                 if isinstance(response['information'], list):
                     info = response['information']
                 else:
@@ -68,6 +64,27 @@ class Extractor(LLMAgent):
                 'decision': decision,
                 'extracted_information': info,
             })
+        if len(question) == 1 and len(extracted_info) > 1:
+            decision = [x['decision'] for x in extracted_info]
+            # If any decision is 'relevant', we return 'relevant'
+            if 'relevant' in decision:
+                decision = 'relevant'
+                all_info = []
+                for item in extracted_info:
+                    if isinstance(item['extracted_information'], list):
+                        all_info.extend(item['extracted_information'])
+                    elif isinstance(item['extracted_information'], str):
+                        all_info.append(item['extracted_information'])
+                extracted_info = {
+                    'decision': decision,
+                    'extracted_information': all_info
+                }
+            else:
+                decision = 'not relevant'
+                extracted_info = {
+                    'decision': decision,
+                    'extracted_information': []
+                }
         return extracted_info           
 
 
@@ -84,7 +101,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 1,  
-        'n': 1, 
+        'n': 4, 
         'top_p': 0.9,
         'max_tokens': 1024*16,  # Set to a high value to allow for long responses 
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -96,7 +113,6 @@ if __name__ == "__main__":
     generator = Extractor(
         client_kwargs=online_model_kwargs, 
         generate_kwargs=generate_kwargs, 
-        verbose=True
     )
 
     question = 'In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?'

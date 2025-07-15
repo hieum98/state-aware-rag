@@ -1,6 +1,6 @@
 from typing import List
 import datasets
-from flashrag.evaluator.metrics import (
+from utils.metrics import (
     ExactMatch, 
     Sub_ExactMatch, 
     F1_Score, 
@@ -48,11 +48,27 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
             results['retrieval_recall'] = retrieval_recall_score
         elif metric == 'llm_judge':
             assert 'pred' in data.features and 'golden_answers' in data.features, "Dataset must contain 'pred' and 'golden_answers' fields."
-            metric_config['metric_setting'] = {
-                'llm_judge_setting' : {
-                    'model_name': kwargs.get('llm_judge_model_name', 'Qwen/Qwen3-8B'),
-                    'model_path': kwargs.get('llm_judge_model_name', 'Qwen/Qwen3-8B'),
-                }
+            default_llm_setting = {
+                'model_name': 'openai/judge', 
+                'url': 'http://0.0.0.0:30000/v1', 
+                'api_key': 'your_api_key_here',  # Replace with your actual API key
+                'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
+                'concurrency': 64,
+            }
+            default_generate_setting = {
+                'temperature': 0.1,  
+                'n': 1, 
+                'top_p': 0.9,
+                'max_tokens': 4096,  
+                # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
+                # For greedy decoding set it to 1
+                'top_k': 20,
+                'tensor_parallel_size': 1,
+                'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+            }
+            metric_config['judge_setting'] = {
+                'llm_setting' : kwargs.get('llm_setting', default_llm_setting),
+                'generate_setting': kwargs.get('generate_setting', default_generate_setting),
             }
             llm_judge_metric = LLMJudge(config=metric_config)
             llm_judge_score, llm_judge_detail = llm_judge_metric.calculate_metric(data)
@@ -70,23 +86,31 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Compute evaluation metrics for a dataset.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
-    parser.add_argument("--metrics", type=str, nargs='+', default=['all'], help="List of metrics to compute.")
+    parser.add_argument("--metrics", type=str, nargs='+', default=['all'], help="List of metrics to compute: 'f1', 'em', 'sub_em', 'retrieval_recall', 'llm_judge', or 'all' for all metrics.")
     parser.add_argument("--dataset_name", type=str, default="default", help="Name of the dataset.")
     parser.add_argument("--retrieval_recall_topk", type=int, default=5, help="Top-k for retrieval recall metric.")
     parser.add_argument("--llm_judge_model_name", type=str, default='Qwen/Qwen3-8B', help="Model name for LLM judge metric.")
+    parser.add_argument("--api_url", type=str, default=None, help="API URL for LLM judge metric.")
 
     args = parser.parse_args()
 
     # Load the dataset
     dataset = datasets.load_from_disk(args.dataset_path)
 
+    llm_setting = {
+            'model_name': f'openai/{args.llm_judge_model_name}', 
+            'url': args.api_url if args.api_url else 'http://0.0.0.0:30000/v1', 
+            'api_key': 'your_api_key_here',  # Replace with your actual API key
+            'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
+            'concurrency': 64,
+        }
     # Compute metrics
     results, updated_dataset = compute_metrics(
         data=dataset,
         metrics=args.metrics,
         dataset_name=args.dataset_name,
         retrieval_recall_topk=args.retrieval_recall_topk,
-        llm_judge_model_name=args.llm_judge_model_name
+        llm_setting=llm_setting,
     )
 
     # Print results

@@ -155,7 +155,7 @@ def search(
     if len(answers) == 0:
         print("No valid solution nodes found in the reasoning tree.")
         final_answer = None
-    final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+    final_answer = evaluator.majority_vote(question=user_question, answers=answers)[0]
     
     if save_tree:
         # check if the save directory does not exist, create it

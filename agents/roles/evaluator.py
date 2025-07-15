@@ -32,6 +32,43 @@ class Evaluator(LLMAgent):
         self.majority_vote_prompt = evaluate.MAJORITY_VOTE_PROMPT
         self.majority_vote_examples = None
 
+        self.llm_judge_metric_prompt = evaluate.JUDGE_METRIC_PROMPT
+        self.llm_judge_metric_examples = None
+
+    def evaluate_and_analyze_answer(
+            self,
+            question: Union[str, List[str]],
+            correct_answer: Union[str, List[str], List[List[str]]],
+            predicted_answer: Union[str, List[str]],
+            **kwargs: Any
+    ):
+        if isinstance(question, str):
+            question = [question]
+            assert isinstance(predicted_answer, str), "predicted_answer must be a string when question is a string."
+            predicted_answer = [predicted_answer]
+            correct_answer = [correct_answer]
+        kwargs['n'] = 1
+        
+        assert len(question) == len(predicted_answer) == len(correct_answer), "The lengths of question, predicted_answer, and correct_answer must match."
+        batch = [
+            self.llm_judge_metric_prompt.format(
+                question=q,
+                correct_answer=ca,
+                predicted_answer=pa,
+                examples=self.llm_judge_metric_examples if self.llm_judge_metric_examples else "Not provided."
+            )
+            for q, ca, pa in zip(question, correct_answer, predicted_answer)
+        ]
+        batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
+        if self.verbose:
+            print("Generating evaluations for final answers:")
+            print("Questions:", question)
+            print("Correct Answers:", correct_answer)
+            print("Predicted Answers:", predicted_answer)
+        kwargs['output_schema'] = evaluate.LLMJudgeMetricOutput
+        responses = self.role_execute(batch, **kwargs)
+        return responses
+
     def evaluate_final_answer(
             self,
             question: Union[str, List[str]],

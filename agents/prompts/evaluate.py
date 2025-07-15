@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Union, Literal
+from typing import Optional, Union, Literal
 import pydantic
 
 
@@ -196,4 +196,44 @@ class MajorityVoteOutput(pydantic.BaseModel):
         ...,
         description="A detailed explanation of how the final answer was derived from the majority of the provided answers."
     )
-    
+
+
+JUDGE_METRIC_PROMPT = """You are an expert assistant specializing in evaluating the quality of answers to questions. Your task is to assess the correctness of a model's generated output, which includes both its reasoning process and its final answer.
+
+Instructions:
+1. Question Analysis: Carefully read and understand the question. Identify key components and clarify what is being asked.
+2. Answer Evaluation: First, compare the final conclusion of the predicted answer against the correct answers. If it matches any one of the correct answers, the evaluation is complete. If the final answer is incorrect or incomplete, you must then analyze the full reasoning process. Search for any step or intermediate conclusion where the correct answer is explicitly stated or strongly implied.
+3. Prediced Answer Analysis: If the predicted answer is incorrect, analyze the answer and classify it into one of the following categories:
+    - Lacking Information: There are a statement or reasoning that is missing from the answer. It can be a missing fact, a missing step in the reasoning, or an incomplete explanation.
+    - Incorrect Reasoning: The reasoning process contains errors or logical flaws.
+    - Incomplete Answer: The answer is partially correct but does not fully address the question or misses key details.
+    - Other: Any other issues that do not fit the above categories.
+4. Correctness Decision: Based on your evaluation, determine the decision using these rules:
+    - Mark as true (Correct) if: The model's final answer semantically matches the correct answer OR the correct answer is clearly present or implied in the model's reasoning steps, even if the final answer is different or flawed.
+    - Mark as false (Incorrect) if: The correct answer is NOT found in the final answer OR anywhere in the reasoning path.
+
+Here are some examples: {examples}
+
+Now, please evaluate the following question and answers:
+Question: {question}
+Correct Answer: {correct_answer}
+Predicted Answer: {predicted_answer}
+"""
+
+class LLMJudgeMetricOutput(pydantic.BaseModel):
+    decision: bool = pydantic.Field(
+        ...,
+        description="True if the predicted answer is correct, False otherwise."
+    )
+    error_type: Optional[str] = pydantic.Field(
+        ...,
+        description="Type of error if the answer is incorrect. Possible values: 'lacking_information', 'incorrect_reasoning', 'incomplete_answer', 'correct_answer', 'other' or None if the answer is correct."
+    )
+    reasoning: str = pydantic.Field(
+        ...,
+        description="Detailed reasoning of the LLM's decision."
+    )
+    confidence: Literal['high', 'medium', 'low'] = pydantic.Field(
+        ...,
+        pattern=r"^(high|medium|low)$",
+    )

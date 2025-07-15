@@ -75,16 +75,16 @@ class Extractor(LLMAgent):
                         all_info.extend(item['extracted_information'])
                     elif isinstance(item['extracted_information'], str):
                         all_info.append(item['extracted_information'])
-                extracted_info = {
+                extracted_info = [{
                     'decision': decision,
                     'extracted_information': all_info
-                }
+                }]
             else:
                 decision = 'not relevant'
-                extracted_info = {
+                extracted_info = [{
                     'decision': decision,
                     'extracted_information': []
-                }
+                }]
         return extracted_info           
 
 

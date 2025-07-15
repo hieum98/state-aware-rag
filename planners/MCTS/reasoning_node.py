@@ -198,11 +198,11 @@ class ReasoningNode(Node, NodeMixin):
                 memory_information = extracted_memory['extracted_information']
         return memory_information
     
-    def explore(self, user_question: str, sub_question: Optional[str] = None) -> List[str]:
+    def explore(self, question: Optional[str] = None) -> List[str]:
         if self.verbose:
-            print(f"Exploring external knowledge base for sub-question: {sub_question}")
-        queries_for_retriever = self.generator.generate_queries_for_retriever(question=sub_question)[0]['queries']
-        queries_for_retriever.append(sub_question)  # Add the sub question to the queries for retriever to prevent the case where the generated query is wrong or empty
+            print(f"Exploring external knowledge base for sub-question: {question}")
+        queries_for_retriever = self.generator.generate_queries_for_retriever(question=question)[0]['queries']
+        queries_for_retriever.append(question)  # Add the sub question to the queries for retriever to prevent the case where the generated query is wrong or empty
         retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=5, reranker_top_k=6)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
             retrieved_docs = sum(retrieved_docs, [])  # Flatten the list of lists
@@ -211,7 +211,7 @@ class ReasoningNode(Node, NodeMixin):
         retrieved_information = ""
         for i, doc in enumerate(retrieved_docs):
             retrieved_information += f"Retrieved information {i+1}:\n{doc}\n"
-        extracted_retrieval_information = self.extractor.extract(question=sub_question, document=retrieved_information)[0]
+        extracted_retrieval_information = self.extractor.extract(question=question, document=retrieved_information)[0]
         external_information = []
         if extracted_retrieval_information['decision'] == 'relevant':
             external_information = extracted_retrieval_information['extracted_information']
@@ -262,7 +262,7 @@ class ReasoningNode(Node, NodeMixin):
         path = self.get_path()
         reasoning_trace, _ = self.get_reasoning_trace(path)
         memory_information = self.reflect(sub_question=user_question)  # Reflect on the memory
-        external_information = self.explore(user_question=user_question, sub_question=user_question)  # Explore the external knowledge base
+        external_information = self.explore(question=user_question)  # Explore the external knowledge base
         important_information = ""
         if memory_information:
             memory_data = "\n".join(memory_information)
@@ -312,7 +312,7 @@ class ReasoningNode(Node, NodeMixin):
         if self.node_type == NodeType.REPHASED_QUESTION_NODE and self.parent.node_type != NodeType.USER_QUESTION:
             sub_question = self.state['node_content']
             memory_information = self.reflect(sub_question=sub_question)  # Reflect on the memory
-            external_information = self.explore(user_question=user_question, sub_question=sub_question)  #
+            external_information = self.explore(question=sub_question)  #
             important_information = ""
             if external_information:
                 external_data = "\n".join(external_information)
@@ -366,7 +366,7 @@ class ReasoningNode(Node, NodeMixin):
                     if sub_question.strip() == "":
                         continue
                     memory_information = self.reflect(sub_question=sub_question)  # Reflect on the memory
-                    external_information = self.explore(user_question=user_question, sub_question=sub_question)  # Explore the external knowledge base
+                    external_information = self.explore(question=sub_question)  # Explore the external knowledge base
                     important_information = ""
                     if memory_information:
                         memory_data = "\n".join(memory_information)
@@ -435,7 +435,7 @@ class ReasoningNode(Node, NodeMixin):
         user_question = self.node_config['user_question']
 
         memory_information = self.reflect(sub_question=current_step_objective)  # Reflect on the memory
-        external_information = self.explore(user_question=user_question, sub_question=current_step_objective)  # Explore the external knowledge base
+        external_information = self.explore(question=current_step_objective)  # Explore the external knowledge base
         important_information = ""
         if memory_information:
             memory_data = "\n".join(memory_information)

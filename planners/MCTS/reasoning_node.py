@@ -361,6 +361,8 @@ class ReasoningNode(Node, NodeMixin):
                 all_external_information = []
                 for item in subquestion_respones:
                     sub_question = item['subquestion']
+                    if sub_question is None:
+                        continue
                     if sub_question.strip() == "":
                         continue
                     memory_information = self.reflect(sub_question=sub_question)  # Reflect on the memory

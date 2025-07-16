@@ -196,7 +196,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 1,  
-        'n': 1, 
+        'n': 3, 
         'top_p': 0.9,
         'max_tokens': 1024*4,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 0.1,  
-        'n': 1, 
+        'n': 5, 
         'top_p': 0.9,
         'max_tokens': 1024*4,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -238,7 +238,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 0.1,  
-        'n': 1, 
+        'n': 5, 
         'top_p': 0.9,
         'max_tokens': 1024*4,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -262,7 +262,7 @@ if __name__ == "__main__":
     }
     retriever = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    question = "Where was the performer of song (Last Night) I Heard You Crying In Your Sleep born?"
+    question = "Where was the director of film Breakup Buddies born?"
 
     final_answer, solution = search(
         generator=generator,

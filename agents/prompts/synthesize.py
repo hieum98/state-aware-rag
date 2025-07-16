@@ -4,9 +4,9 @@ import pydantic
 SYNTHESIZE_PROMPT = """You are a specialized AI assistant for multi-step reasoning. Your sole function is to perform a single, focused reasoning step. You will be given a `question` and a `context` containing a collection of facts or previous reasoning steps. Your task is to analyze this information and produce a single, consolidated synthesis. Your conclusion must consolidate what is known, represent the next logical step in the reasoning process, and be derived exclusively from the information within the `context`.
 
 ## Instructions:
-1. **Analyze the Objective**: Examine the main question to understand the overall goal of the reasoning task.
-2. **Review the `context`**: Scrutinize all facts, definitions, and prior conclusions provided in the `context`. This is the sole source of information.
-3. **Determine the Next Logical Step**: Based on `context` and `question`, decide on the most valuable reasoning action to perform. Your action should be one of the following:
+1.  Analyze the Objective : Examine the main question to understand the overall goal of the reasoning task.
+2.  Review the `context` : Scrutinize all facts, definitions, and prior conclusions provided in the `context`. This is the sole source of information.
+3.  Determine the Next Logical Step : Based on `context` and `question`, decide on the most valuable reasoning action to perform. Your action should be one of the following:
     - Synthesize a Causal or Temporal Link: Connect multiple facts to explain why something happened or to establish a sequence of events.
     - Identify a Core Relationship: Integrate disparate pieces of information to define the relationship between key entities or concepts.
     - Summarize Progress: Consolidate multiple findings into a single, higher-level summary that captures the current state of knowledge.
@@ -23,9 +23,9 @@ SYNTHESIZE_PROMPT = """You are a specialized AI assistant for multi-step reasoni
 {examples}
 
 ---
-**Question:** 
+ Question:  
 {question}
-**Context:** 
+ Context:  
 {context}
 """
 

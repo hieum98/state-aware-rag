@@ -407,18 +407,21 @@ class ReasoningNode(Node, NodeMixin):
             question = self.state['sub_question']
         if self.verbose:
             print(f"Rephrasing question: {question}")
-        response = self.generator.rephase_question(question=question, n=1)[0] # Generate only one rephrased question
-        if self.verbose:
-            print(f"Rephrased question: {response['rephrased_question']}")
-        node = ReasoningNode(
-            parent=self,
-            node_type=NodeType.REPHASED_QUESTION_NODE,
-            depth=self.tree_depth + 1,
-            question=response['rephrased_question'],
-            confidence=1.0,  # Default confidence is 1.0 for REPHASE_QUESTION nodes
-            **self.node_config
-        )
-        return [node]
+        responses = self.generator.rephase_question(question=question) # Generate only one rephrased question
+        children = []
+        for response in responses:
+            if self.verbose:
+                print(f"Rephrased question: {response['rephrased_question']}")
+            node = ReasoningNode(
+                parent=self,
+                node_type=NodeType.REPHASED_QUESTION_NODE,
+                depth=self.tree_depth + 1,
+                question=response['rephrased_question'],
+                confidence=1.0,  # Default confidence is 1.0 for REPHASE_QUESTION nodes
+                **self.node_config
+            )
+            children.append(node)
+        return children
             
     def generate_self_corrected_node(self) -> Tuple[List["ReasoningNode"], Optional[List[str]]]:
         """ Generate a self-corrected node from the current node.

@@ -1,3 +1,4 @@
+import json
 import time 
 from typing import Any, Dict, List, Optional, Union
 import pydantic
@@ -47,7 +48,8 @@ class Evaluator(LLMAgent):
             assert isinstance(predicted_answer, str), "predicted_answer must be a string when question is a string."
             predicted_answer = [predicted_answer]
             correct_answer = [correct_answer]
-        kwargs['n'] = 1
+        if len(question) > 1:
+            kwargs['n'] = 1
         
         assert len(question) == len(predicted_answer) == len(correct_answer), "The lengths of question, predicted_answer, and correct_answer must match."
         batch = [
@@ -67,6 +69,24 @@ class Evaluator(LLMAgent):
             print("Predicted Answers:", predicted_answer)
         kwargs['output_schema'] = evaluate.LLMJudgeMetricOutput
         responses = self.role_execute(batch, **kwargs)
+        if len(question) == 1 and len(responses) > 1:
+            # Majority vote
+            decision = [res.get('decision', False) for res in responses]
+            confidence = [res.get('confidence', 0.1) for res in responses]
+            decision = sum(decision) / len(decision) if len(decision) > 0 else 0.0
+            confidence = sum(confidence) / len(confidence) if len(confidence) > 0 else 0.1
+            decision = decision >= 0.5  # Convert to boolean
+            error_type = [res.get('error_type', 'None') for res in responses]
+            reasoning = [res.get('reasoning', '') for res in responses]
+            # Convert error_type and reasoning to a single string to make it consistent. Make sure that we can reconstruct the original list later.
+            error_type = json.dumps(error_type)
+            reasoning = json.dumps(reasoning)
+            responses = [{
+                'decision': decision,
+                'confidence': confidence,
+                'error_type': error_type,
+                'reasoning': reasoning
+            }]
         return responses
 
     def evaluate_final_answer(
@@ -92,7 +112,8 @@ class Evaluator(LLMAgent):
             assert isinstance(predicted_answer, str), "predicted_answer must be a string when question is a string."
             predicted_answer = [predicted_answer]
             correct_answer = [correct_answer]
-        kwargs['n'] = 1
+        if len(question) > 1:
+            kwargs['n'] = 1
         
         assert len(question) == len(predicted_answer) == len(correct_answer), "The lengths of question, predicted_answer, and correct_answer must match."
         batch = [
@@ -112,6 +133,14 @@ class Evaluator(LLMAgent):
             print("Predicted Answers:", predicted_answer)
         kwargs['output_schema'] = evaluate.EvaluateAnswerOutput
         responses = self.role_execute(batch, **kwargs)
+        if len(question) == 1 and len(responses) > 1:
+            # Majority vote
+            decision = [res.get('decision', False) for res in responses]
+            confidence = [res.get('confidence', 0.1) for res in responses]
+            decision = sum(decision) / len(decision) if len(decision) > 0 else 0.0
+            confidence = sum(confidence) / len(confidence) if len(confidence) > 0 else 0.1
+            decision = decision >= 0.5
+            return [decision * confidence]
         results = []
         for response in responses:
             score = response.get('decision', False) * response.get('confidence', 0.1)
@@ -217,6 +246,9 @@ class Evaluator(LLMAgent):
                 factuality_score = 0.1
             score = (relevance_score + sufficiency_score + coherence_score + factuality_score) / 4.0
             results.append(score)
+        if len(main_question) == 1 and len(results) > 1:
+            # Majority vote
+            results = [sum(results) / len(results)]  # Average the scores
         return results
     
     def evaluate_path(
@@ -298,6 +330,9 @@ class Evaluator(LLMAgent):
                 conclusion_quality = 0.1
             score = (step_quality + overall_quality + conclusion_quality) / 3.0
             results.append(score)
+        if len(main_question) == 1 and len(results) > 1:
+            # Majority vote
+            results = [sum(results) / len(results)]
         return results
 
     # Modified from FlashRAG https://vscode.dev/github/RUC-NLPIR/FlashRAG/blob/main/flashrag/evaluator/metrics.py#L187
@@ -375,7 +410,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 1,  
-        'n': 1, 
+        'n': 4, 
         'top_p': 0.9,
         'max_tokens': 1024*16,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -398,9 +433,11 @@ if __name__ == "__main__":
     2. In 2018, Alexis Sánchez left Arsenal to join Manchester United.
     Final Answer: Alexis Sánchez
     """
+    # analyze_answer = generator.evaluate_and_analyze_answer(question=question, correct_answer=correct_answer, predicted_answer=predicted_answer)
+    evaluate_answer = generator.evaluate_final_answer(question=question, correct_answer=correct_answer, predicted_answer=predicted_answer)
     # em_scores = generator.evaluate_with_em(correct_answer, predicted_answer)
     # judge_score = generator.evaluate_final_answer(question=question, correct_answer=correct_answer, predicted_answer=predicted_answer)
-    path_score = generator.evaluate_path(main_question=question, reasoning_path=reasoning_trace, ground_truth_answer=correct_answer)
+    # path_score = generator.evaluate_path(main_question=question, reasoning_path=reasoning_trace, ground_truth_answer=correct_answer)
     breakpoint()
 
     question_2 = 'What is the capital of France?'
@@ -417,5 +454,5 @@ if __name__ == "__main__":
     reasoning_trace = [reasoning_trace, reasoning_trace_2]
     # # em_scores = generator.evaluate_with_em(correct_answer, predicted_answer)
     # judge_scores = generator.evaluate_final_answer(question=question, correct_answer=correct_answer, predicted_answer=predicted_answer)
-    path_score = generator.evaluate_path(main_question=question, reasoning_path=reasoning_trace, ground_truth_answer=correct_answer)
+    # path_score = generator.evaluate_path(main_question=question, reasoning_path=reasoning_trace, ground_truth_answer=correct_answer)
     breakpoint()

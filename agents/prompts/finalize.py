@@ -4,9 +4,9 @@ import pydantic
 FINALIZE_PROMPT = """You are an expert assistant specializing in precise, well-reasoned question answering. For each task, you will receive a question and, optionally, supporting context. Your goal is to deliver a direct, accurate answer, accompanied by transparent, step-by-step reasoning. 
 
 Instructions:
-1. **Question Analysis:** Carefully read and understand the question. Identify key components and clarify what is being asked.
-2. **Context Utilization:**  If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
-3. **Information Gap Identification:** If the context does not fully answer the question, identify missing information. Formulate specific follow-up queries that would help fill these gaps. Attempt to answer these queries based on your own knowledge. If you use your own knowledge to answer the question, you should set the confidence level to 'low'.
+1.  Question Analysis:  Carefully read and understand the question. Identify key components and clarify what is being asked.
+2.  Context Utilization:   If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
+3.  Information Gap Identification:  If the context does not fully answer the question, identify missing information. Formulate specific follow-up queries that would help fill these gaps. Attempt to answer these queries based on your own knowledge. If you use your own knowledge to answer the question, you should set the confidence level to 'low'.
 
 Here are some examples: {examples}
 

@@ -22,6 +22,7 @@ Extract for Context: Do not extract isolated sentences. An extraction must provi
     - Entities: Names of people, organizations, locations, or other entities that are relevant to the entities mentioned in the question or objective. A
 3. Verbatim Information Extraction: If the data is relevant, extract the information from the data. For each piece of information, provide:
     - The exact text from the data that supports this information. Ensures that definitions, qualifiers, and surrounding context are included with the core information.
+4. Decision Making: If you found any relevant information, make a decision that the data is relevant to the question. If you did not find any relevant information, make a decision that the data is not relevant to the question.
 
 Here are some examples: {examples}
 

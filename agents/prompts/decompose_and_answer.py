@@ -6,12 +6,12 @@ GENERATE_SUBQUESTION_PROMPT = """You are an expert assistant specializing in mul
 ## Core Principle: The generated subquestion must NOT be answerable using the provided context. If a logical subquestion can be answered by the context, it is not a true knowledge gap, and you must look for the next piece of missing information.
 
 ## Step-by-Step Instructions:
-1. **Analyze the Main Question:** Deconstruct the question to identify its core intent (e.g., factual lookup, comparison, causal link), key entities, and the information required for a complete answer.
-2. **Map Context to Requirements:* Systematically check if the provided context contains all the facts, entities, and relationships identified in Step 1.
-3. **Decision Point: Assess Answerability:**
+1.  Analyze the Main Question:  Deconstruct the question to identify its core intent (e.g., factual lookup, comparison, causal link), key entities, and the information required for a complete answer.
+2.  Map Context to Requirements:* Systematically check if the provided context contains all the facts, entities, and relationships identified in Step 1.
+3.  Decision Point: Assess Answerability: 
    - If YES (Context is Sufficient): The main question can be fully and confidently answered. No subquestion is needed.
    - If NO (Context is Insufficient): The context is missing at least one critical piece of information. Proceed to the next steps.
-4. **If the Context is Insufficient, Execute the Following:**
+4.  If the Context is Insufficient, Execute the Following: 
    a. Identify the Core Knowledge Gap: Pinpoint the most immediate and crucial piece of missing information. This is the first thing you would need to look up to start solving the main question.
    b. Formulate the Subquestion: Create a clear, self-contained question that precisely targets this single knowledge gap. The subquestion should be:
       * Atomic: Asks for one fact.
@@ -23,9 +23,9 @@ GENERATE_SUBQUESTION_PROMPT = """You are an expert assistant specializing in mul
 {examples}
 
 ---
-**Question:** 
+ Question:  
 {question}
-**Context:** 
+ Context:  
 {context}
 """
 
@@ -52,9 +52,9 @@ class SubquestionOutput(pydantic.BaseModel):
 ANSWER_PROMPT = """You are an expert assistant specializing in precise, well-reasoned question answering. For each task, you will receive a question and, optionally, supporting context. Your goal is to deliver a direct, accurate answer, accompanied by transparent, step-by-step reasoning. 
 
 ## Instructions:
-1. **Question Analysis:** Carefully read and understand the question. Identify key components and clarify what is being asked.
-2. **Context Utilization:**  If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
-3. **Information Gap Identification:** If the context does not fully answer the question, identify missing information. Formulate specific follow-up queries that would help fill these gaps. Attempt to answer these queries based on your own knowledge. If you use your own knowledge to answer the question, you should set the confidence level to 'low'.
+1.  Question Analysis:  Carefully read and understand the question. Identify key components and clarify what is being asked.
+2.  Context Utilization:   If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
+3.  Information Gap Identification:  If the context does not fully answer the question, identify missing information. Formulate specific follow-up queries that would help fill these gaps. Attempt to answer these queries based on your own knowledge. If you use your own knowledge to answer the question, you should set the confidence level to 'low'.
 
 Here are some examples: {examples}
 
@@ -103,7 +103,7 @@ GENERATE_QUERIES_FOR_RETRIEVER = """"You are a highly advanced Reasoning Engine.
 {examples}
 
 ---
-**Input:**
+ Input: 
 {question}
 """
 

@@ -17,7 +17,7 @@ REPHRASE_QUESTION_PROMPT = """You are a Prompt Refiner, an AI expert skilled at 
 {examples}
 
 ---
-**Question:**
+ Question: 
 {question}
 """
 

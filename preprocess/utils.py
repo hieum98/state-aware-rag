@@ -36,8 +36,8 @@ def simple_preprocess(text: str) -> str:
     # text = re.sub(r'(\[Email\] )+', '[Email] ', text)
     # text = re.sub(r'(\[URL\] )+', '[URL] ', text)
     # Truncating too long text
-    if len(text.split(' ')) > 2048:
-        text = ' '.join(text.split(' ')[:2048])
+    # if len(text.split(' ')) > 2048:
+    #     text = ' '.join(text.split(' ')[:2048])
     # remove special characters
     # text = re.sub(r'[^a-zA-Z0-9\s.,;:!?\'\"()\-\[\]]', '', text)
     return text

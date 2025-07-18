@@ -262,7 +262,7 @@ if __name__ == "__main__":
     # )
 
     retriever_online_kwargs = {
-        "url": "http://n0998:5000/search",
+        "url": "http://10.4.226.141:5000/search",
         "retrieval_topk": 64,
         "query_instruction": "query: ",
     }
@@ -270,5 +270,5 @@ if __name__ == "__main__":
 
     query = ["Who directed the film Breakup Buddies?"]
     # query = "When was the Declaration of Independence signed?"
-    results = retriever_agent.search(query, top_k=5, instruction=None, reranker_top_k=6, reranker_instruction=None)
+    results = retriever_agent.search(query, top_k=5)
     breakpoint()

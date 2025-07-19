@@ -228,7 +228,7 @@ class LLMAgent:
         # Ensure cache directory exists
         os.makedirs(self.cache_dir, exist_ok=True)
     
-    def save_to_cache(self, cache_file: str, responses: List[Dict[str, Any]], input=None):
+    def save_to_cache(self, cache_file: str, responses: List[Dict[str, Any]], input=None, any_other_info: Dict[str, Any] = None):
         # print(f"Saving responses to cache file: {cache_file}")
         to_save_data = []
         for item in responses:
@@ -238,13 +238,15 @@ class LLMAgent:
                 to_save_data.append({
                     'output': item['output'].model_dump(),
                     'reasoning': item['reasoning'],
-                    'input': input 
+                    'input': input,
+                    'any_other_info': any_other_info if any_other_info else None
                 })
             else:
                 to_save_data.append({
                     'output': item['output'],
                     'reasoning': item['reasoning'],
-                    'input': input  # Save the input for debugging
+                    'input': input,  # Save the input for debugging
+                    'any_other_info': any_other_info if any_other_info else None
                 })
         if to_save_data: # Only save if there is valid data
             with open(cache_file, 'w', encoding='utf-8') as f:
@@ -266,6 +268,9 @@ class LLMAgent:
         return data
     
     def generate(self, input_args, **kwargs):
+        any_other_info = kwargs.pop('any_other_info', None)
+        if any_other_info is not None:
+            assert isinstance(any_other_info, dict), "any_other_info to save must be a dictionary."
         use_cache = kwargs.get('use_cache', self.use_cache)
         if not use_cache:
             return self.client.generate(input_args, **kwargs)
@@ -280,16 +285,23 @@ class LLMAgent:
             return index, response
         except FileNotFoundError:
             index, response = self.client.generate(input_args, **kwargs)
-            self.save_to_cache(cache_file, response, input=messages)
+            self.save_to_cache(cache_file, response, input=messages, any_other_info=any_other_info)
             return index, response
         
     def batch_generate(self, batch_messages: List[List[Dict[str, str]]], **kwargs):
         use_cache = kwargs.get('use_cache', self.use_cache)
+        any_other_info = kwargs.pop('any_other_info', None)
+        if any_other_info is not None:
+            # Ensure any_other_info is a List of dictionaries with the same length as batch_messages
+            assert isinstance(any_other_info, list) and isinstance(any_other_info[0], dict), "any_other_info to save must be a list of dictionaries."
+            assert len(any_other_info) == len(batch_messages), "any_other_info must have the same length as batch_messages."
+            
         if not use_cache:
             return self.client.batch_generate(batch_messages, **kwargs)
         
         cached_responses = []
         to_compute_responses = []
+        to_save_additional_info = []
         for i, messages in enumerate(batch_messages):
             input_str = f"Messages: {messages},  kwargs: {kwargs}"
             input_hash = sha256(input_str.encode('utf-8')).hexdigest()
@@ -306,7 +318,8 @@ class LLMAgent:
             cache_files = [item[2] for item in to_compute_responses]
             responses = self.client.batch_generate(messages, **kwargs)
             for i, response, cache_file, m in zip(index, responses, cache_files, messages):
-                self.save_to_cache(cache_file, response, m)
+                additional_info = any_other_info[i] if any_other_info is not None else None
+                self.save_to_cache(cache_file, response, m, any_other_info=additional_info)
                 cached_responses.append((i, response))
         cached_responses = sorted(cached_responses, key=lambda x: x[0])
         assert len(cached_responses) == len(batch_messages), "Batch generation did not return the expected number of outputs."

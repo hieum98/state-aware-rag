@@ -203,9 +203,11 @@ class ReasoningNode(Node, NodeMixin):
             print(f"Exploring external knowledge base for sub-question: {question}")
         queries_for_retriever = self.generator.generate_queries_for_retriever(question=question)[0]['queries']
         queries_for_retriever.append(question)  # Add the sub question to the queries for retriever to prevent the case where the generated query is wrong or empty
-        retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=5, reranker_top_k=6)['retrieved_docs']
+        retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=5)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
             retrieved_docs = sum(retrieved_docs, [])  # Flatten the list of lists
+        retrieved_docs = [item['contents'] for item in retrieved_docs if 'contents' in item]  # Extract the content from the retrieved documents
+        breakpoint()
         retrieved_docs = list(set(retrieved_docs))  # Remove duplicates
 
         retrieved_information = ""

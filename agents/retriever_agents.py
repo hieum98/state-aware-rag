@@ -171,7 +171,7 @@ class APIRetrieverAgent:
         self.url = url
         self.headers = {'Content-Type': 'application/json'}
         self.retrieval_topk = kwargs.get('retrieval_topk', 5)
-        self.query_instruction = kwargs.get('query_instruction', "")
+        self.query_instruction = kwargs.get('query_instruction', None)
 
     def search(
             self, 
@@ -179,8 +179,8 @@ class APIRetrieverAgent:
             top_k: int = None, 
             return_score=False, 
             instruction: str = None,
-            reranker_top_k: int = None,
-            reranker_instruction: str = None,
+            # reranker_top_k: int = None,
+            # reranker_instruction: str = None,
             **kwargs
             ):
         """
@@ -202,8 +202,8 @@ class APIRetrieverAgent:
             "top_k": top_k,
             "return_score": return_score,
             "instruction": instruction,
-            "reranker_top_k": reranker_top_k if reranker_top_k is not None else 5,
-            "reranker_instruction": reranker_instruction
+            # "reranker_top_k": reranker_top_k if reranker_top_k is not None else 5,
+            # "reranker_instruction": reranker_instruction
         })
         begin_time = time.time()
         response = requests.post(self.url, headers=self.headers, data=data)
@@ -228,9 +228,10 @@ class RetrieverAgent:
         if online_kwargs is not None:
             self.agent = APIRetrieverAgent(**online_kwargs)
         else:
-            self.agent = FlashRAGRetrieverAgent(**offline_kwargs)
+            # self.agent = FlashRAGRetrieverAgent(**offline_kwargs)
+            raise NotImplementedError("Offline retriever agent is not implemented yet. Please use online_kwargs for API-based retrieval.")
     
-    def search(self, query: Union[str, List[str]], top_k: int = None, return_score=False, instruction: str = '', **kwargs):
+    def search(self, query: Union[str, List[str]], top_k: int = None, return_score=False, instruction: str = None, **kwargs):
         """
         Searches for the top-k relevant documents for a given query.
         Args:
@@ -262,13 +263,13 @@ if __name__ == "__main__":
     # )
 
     retriever_online_kwargs = {
-        "url": "http://10.4.226.141:5000/search",
+        "url": "http://10.4.226.205:5000/search",
         "retrieval_topk": 64,
-        "query_instruction": "query: ",
+        "query_instruction": None,
     }
     retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
     query = ["Who directed the film Breakup Buddies?"]
     # query = "When was the Declaration of Independence signed?"
-    results = retriever_agent.search(query, top_k=5)
+    results = retriever_agent.search(query, top_k=5, instruction='Please provide a detailed answer to the following question: {query}')
     breakpoint()

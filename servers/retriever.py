@@ -19,6 +19,11 @@ if __name__ == "__main__":
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     config = SimpleNamespace(**config)
+    if config.encoder_name == 'e5':
+        default_instruction = "query: {query}"
+    elif config.encoder_name == 'qwen3':
+        task_description = 'Given a web search query, retrieve relevant passages that answer the query'
+        default_instruction = 'Instruct: {task_description}\nQuery:{query}'
 
     # Load the faiss index and the corpus
     index_path = config.index_path
@@ -49,11 +54,22 @@ if __name__ == "__main__":
         query = data.get('query', None)
         top_k = data.get('top_k', 16)
         return_score = data.get('return_score', False)
+        instruction = data.get('instruction', default_instruction)
+        if instruction is None:
+            instruction = default_instruction
         if not query:
             return jsonify({"error": "Query is required"}), 400
         if isinstance(query, str):
             query = [query]
 
+        try:
+            # Prepare the query embeddings
+            # Check if instruction is a string and have {query} placeholder
+            assert '{query}' in instruction, "Instruction must contain a {query} placeholder. Falling back to raw query."
+            query = [instruction.format(query=q) for q in query]
+        except:
+            print("Error formatting query with instruction. Using raw query.")
+            query = query
         try:
             query_embeddings = encoder_model_client.embeddings.create(
                 input=query,

@@ -53,14 +53,16 @@ if __name__ == "__main__":
             for item in response.data:
                 embeddings.append(item.embedding)
         except:
-            embeddings = [None] * len(texts)
+            print("Failed to generate embeddings for some texts.")
+            embeddings = [[0.0]] * len(texts)
         return {'embedding': embeddings}
     
+    # data = data.select(range(1000))  # Limit to 1000 samples for testing purposes
     # Generate embeddings for the dataset
     data = data.map(
         get_embeddings,
         batched=True,
-        batch_size=256, 
+        batch_size=512, 
         num_proc=2,
         cache_file_name=None,   
     )
@@ -68,11 +70,12 @@ if __name__ == "__main__":
     embedding_path = f"data/{dataset_name}_embeddings"
     data.save_to_disk(embedding_path)
     # Filter out any entries that failed to generate embeddings
-    failed_embeddings = data.filter(lambda x: x['embedding'] is None, num_proc=32)
+    failed_embeddings = data.filter(lambda x: x['embedding'] == [0.0], num_proc=32)
+    sussess_embeddings = data.filter(lambda x: x['embedding'] != [0.0], num_proc=32)
     # Try to regenerate failed embeddings
     if len(failed_embeddings) > 0:
         print(f"Regenerating {len(failed_embeddings)} failed embeddings...")
-        data = data.map(
+        failed_embeddings = failed_embeddings.map(
             get_embeddings,
             batched=True,
             batch_size=1,
@@ -81,8 +84,8 @@ if __name__ == "__main__":
             desc="Regenerating failed embeddings"
         )
         # Save the embeddings again
-        data = datasets.concatenate_datasets([data, failed_embeddings])
-    data = data.filter(lambda x: x['embedding'] is not None, num_proc=32)
+        data = datasets.concatenate_datasets([sussess_embeddings, failed_embeddings])
+    data = data.filter(lambda x: x['embedding'] != [0.0], num_proc=32)
 
     all_embeddings = data['embedding']
     all_embeddings = np.array(all_embeddings, dtype=np.float32)

@@ -4,6 +4,7 @@ import datasets
 import faiss
 from openai import OpenAI
 import numpy as np
+import torch
 
 from preprocess.utils import simple_preprocess
 
@@ -51,63 +52,81 @@ if __name__ == "__main__":
                 model=model
             )
             for item in response.data:
-                embeddings.append(item.embedding)
+                emb = item.embedding
+                # Normalize the embedding with L2 normalization
+                emb = torch.tensor(emb, dtype=torch.float32)
+                emb = torch.nn.functional.normalize(emb, p=2, dim=-1).tolist()                 
+                embeddings.append(emb)
         except:
             print("Failed to generate embeddings for some texts.")
             embeddings = [[0.0]] * len(texts)
+        
         return {'embedding': embeddings}
     
     # data = data.select(range(1000))  # Limit to 1000 samples for testing purposes
-    # Generate embeddings for the dataset
-    data = data.map(
-        get_embeddings,
-        batched=True,
-        batch_size=512, 
-        num_proc=2,
-        cache_file_name=None,   
-    )
-    # Save the embeddings to disk
     embedding_path = f"data/{dataset_name}_embeddings"
-    data.save_to_disk(embedding_path)
-    # Filter out any entries that failed to generate embeddings
-    failed_embeddings = data.filter(lambda x: x['embedding'] == [0.0], num_proc=32)
-    sussess_embeddings = data.filter(lambda x: x['embedding'] != [0.0], num_proc=32)
-    # Try to regenerate failed embeddings
-    if len(failed_embeddings) > 0:
-        print(f"Regenerating {len(failed_embeddings)} failed embeddings...")
-        failed_embeddings = failed_embeddings.map(
+    if os.path.exists(embedding_path):
+        print(f"Loading existing embeddings from {embedding_path}...")
+        data = datasets.load_from_disk(embedding_path)
+    else:
+        print(f"Generating embeddings for the dataset {dataset_name}...")
+        # Generate embeddings for the dataset
+        data = data.map(
             get_embeddings,
             batched=True,
-            batch_size=1,
-            num_proc=1,
-            cache_file_name=None,
-            desc="Regenerating failed embeddings"
+            batch_size=512, 
+            num_proc=2,
+            cache_file_name=None,   
         )
-        # Save the embeddings again
-        data = datasets.concatenate_datasets([sussess_embeddings, failed_embeddings])
-    data = data.filter(lambda x: x['embedding'] != [0.0], num_proc=32)
+        # Filter out any entries that failed to generate embeddings
+        failed_embeddings = data.filter(lambda x: x['embedding'] == [0.0], num_proc=32)
+        sussess_embeddings = data.filter(lambda x: x['embedding'] != [0.0], num_proc=32)
+        # Try to regenerate failed embeddings
+        if len(failed_embeddings) > 0:
+            print(f"Regenerating {len(failed_embeddings)} failed embeddings...")
+            failed_embeddings = failed_embeddings.map(
+                get_embeddings,
+                batched=True,
+                batch_size=1,
+                num_proc=1,
+                cache_file_name=None,
+                desc="Regenerating failed embeddings"
+            )
+            # Save the embeddings again
+            data = datasets.concatenate_datasets([sussess_embeddings, failed_embeddings])
+        data = data.filter(lambda x: x['embedding'] != [0.0], num_proc=32)
+        data.save_to_disk(embedding_path)
+        data_without_embeddings = data.remove_columns(['embedding'])
+        data_without_embeddings.save_to_disk(f"data/{dataset_name}")
+        print(f"Embeddings saved to {embedding_path}")
+        print(f"Dataset without embeddings saved to 'data/{dataset_name}'")
 
-    all_embeddings = data['embedding']
-    all_embeddings = np.array(all_embeddings, dtype=np.float32)
-    
-    # Normalize embeddings for cosine similarity
-    faiss.normalize_L2(all_embeddings)
-
-    dim = all_embeddings.shape[-1]
-    faiss_index = faiss.index_factory(dim, "Flat", faiss.METRIC_INNER_PRODUCT)
-    if not faiss_index.is_trained:
-        faiss_index.train(all_embeddings)
-    faiss_index.add(all_embeddings)
-    
-    # Save the index to disk
-    index_path = f"data/{dataset_name}.index"
-    faiss.write_index(faiss_index, index_path)
+    data.add_faiss_index(column='embedding', metric_type=faiss.METRIC_INNER_PRODUCT)
+    index_path = f"data/{dataset_name}/index.faiss"
+    data.save_faiss_index('embedding', index_path)
     print(f"Index saved to {index_path}")
 
-    # Save the corresponding dataset
-    data = data.remove_columns(['embedding'])
-    data.save_to_disk(f"data/{dataset_name}")
-    print(f"Dataset saved to data/{dataset_name}")
+    # all_embeddings = data['embedding']
+    # all_embeddings = np.array(all_embeddings, dtype=np.float32)
+    
+    # # Normalize embeddings for cosine similarity
+    # faiss.normalize_L2(all_embeddings)
+
+    # dim = all_embeddings.shape[-1]
+    # faiss_index = faiss.index_factory(dim, "Flat", faiss.METRIC_INNER_PRODUCT)
+    # if not faiss_index.is_trained:
+    #     faiss_index.train(all_embeddings)
+    # faiss_index.add(all_embeddings)
+    
+    # # Save the index to disk
+    # index_path = f"data/{dataset_name}.index"
+    # faiss.write_index(faiss_index, index_path)
+    # print(f"Index saved to {index_path}")
+
+    # # Save the corresponding dataset
+    # data = data.remove_columns(['embedding'])
+    # data.save_to_disk(f"data/{dataset_name}")
+    # print(f"Dataset saved to data/{dataset_name}")
 
 
 

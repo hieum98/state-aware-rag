@@ -217,7 +217,13 @@ class ReasoningNode(Node, NodeMixin):
             'question_id': copy.deepcopy(self.node_config['question_id']),
             'depth': copy.deepcopy(self.tree_depth),
         }
-        queries_for_retriever = self.generator.generate_queries_for_retriever(question=question)[0]['queries']
+        response = self.generator.generate_queries_for_retriever(question=question)
+        queries_for_retriever = []
+        for item in response:
+            x = item.get('query', None)
+            if x is not None and x.strip() != "":
+                queries_for_retriever.append(x)
+        queries_for_retriever = list(set(queries_for_retriever))  # Remove duplicates
         queries_for_retriever.append(question)  # Add the sub question to the queries for retriever to prevent the case where the generated query is wrong or empty
         retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=5)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
@@ -303,12 +309,16 @@ class ReasoningNode(Node, NodeMixin):
             print(important_information)
         response = self.generator.finalize(question=user_question, context=important_information)
         nodes = []
+        all_answers = []
         for item in response:
             answer = item['answer']
             if answer is None or answer.strip() == "":
                 answer = f"{item['detailed_answer']}. \nReasoning: {item['reasoning']}" 
             if self.verbose:
                 print(f"Generated final answer: {answer}")
+            if answer in all_answers:
+                continue  # Skip duplicate answers
+            all_answers.append(answer)
             node = ReasoningNode(
                 parent=self,
                 node_type=NodeType.FINAL_ANSWER,
@@ -353,8 +363,12 @@ class ReasoningNode(Node, NodeMixin):
                 print(important_information)
             response = self.generator.generate_answer(question=sub_question, context=important_information)
             nodes = []
+            all_answers = []
             for item in response:
                 answer = f"{item['detailed_answer']}.\nReasoning: {item['reasoning']}"
+                if answer in all_answers:
+                    continue  # Skip duplicate answers
+                all_answers.append(answer)
                 node = ReasoningNode(
                     parent=self,
                     node_type=NodeType.SUB_QA_NODE,
@@ -385,12 +399,16 @@ class ReasoningNode(Node, NodeMixin):
             else:
                 nodes = []
                 all_external_information = []
+                all_sub_questions = []
                 for item in subquestion_respones:
                     sub_question = item['subquestion']
                     if sub_question is None:
                         continue
                     if sub_question.strip() == "":
                         continue
+                    if sub_question in all_sub_questions:
+                        continue
+                    all_sub_questions.append(sub_question)
                     memory_information = self.reflect(sub_question=sub_question)  # Reflect on the memory
                     external_information = self.explore(question=sub_question)  # Explore the external knowledge base
                     important_information = ""
@@ -435,9 +453,13 @@ class ReasoningNode(Node, NodeMixin):
             print(f"Rephrasing question: {question}")
         responses = self.generator.rephase_question(question=question) # Generate only one rephrased question
         children = []
+        all_rephrased_questions = []
         for response in responses:
             if self.verbose:
                 print(f"Rephrased question: {response['rephrased_question']}")
+            if response['rephrased_question'] in all_rephrased_questions:
+                continue
+            all_rephrased_questions.append(response['rephrased_question'])
             node = ReasoningNode(
                 parent=self,
                 node_type=NodeType.REPHASED_QUESTION_NODE,
@@ -477,15 +499,20 @@ class ReasoningNode(Node, NodeMixin):
             print(important_information)
         response = self.generator.self_correct(question=sub_question, current_answer=sub_answer, context=important_information)
         nodes = []
+        all_reanswer = []
         for item in response:
             if self.verbose:
                 print(f"Generated self-corrected answer: {item['reanswer']}.\nReasoning: {item['reasoning']}")
+            reanswer=f"{item['reanswer']}.\nReasoning: {item['reasoning']}"
+            if reanswer in all_reanswer:
+                continue
+            all_reanswer.append(reanswer)
             node = ReasoningNode(
                 parent=self,
                 node_type=NodeType.SELF_CORRECTED_NODE,
                 depth=self.tree_depth + 1,
                 question=sub_question,
-                answer=f"{item['reanswer']}.\nReasoning: {item['reasoning']}",
+                answer=reanswer,
                 confidence=item['confidence'],
                 **self.node_config
             )
@@ -515,9 +542,13 @@ class ReasoningNode(Node, NodeMixin):
             print(important_information)
         response = self.generator.generate_synthesis(question=user_question, context=important_information)
         nodes = []
+        all_syntheses = []
         for item in response:
             if not item['synthesis']:
                 continue
+            if item['synthesis'] in all_syntheses:
+                continue
+            all_syntheses.append(item['synthesis'])
             if self.verbose:
                 print(f"Generated synthesis: {item['synthesis']}")
             answerable_main_question = item['answerable_main_question']

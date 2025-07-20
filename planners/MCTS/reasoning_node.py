@@ -59,6 +59,7 @@ class ReasoningNode(Node, NodeMixin):
             max_depth: int = 15,
             golden_answer: Optional[Union[str, List[str]]] = None,
             user_question: Optional[str] = None,
+            question_id: Optional[str] = None,
             verbose: bool = False,  
             **kwargs
     ):  
@@ -68,6 +69,7 @@ class ReasoningNode(Node, NodeMixin):
             "max_depth": max_depth,  # Maximum depth of the reasoning tree
             "golden_answer": golden_answer,  # The golden answer for the user question, if available
             "user_question": user_question,  # The main user question for USER_QUESTION nodes
+            "question_id": question_id,  # The ID of the question, if available
             "generator": generator,  # The generator component for the node
             "evaluator": evaluator,  # The evaluator component for the node
             "extractor": extractor,  # The extractor component for the node
@@ -187,13 +189,22 @@ class ReasoningNode(Node, NodeMixin):
         return trace, reasoning_scores
     
     def reflect(self, sub_question: Optional[str] = None) -> List[str]:
+        user_question = copy.deepcopy(self.node_config['user_question'])
+        question_id = copy.deepcopy(self.node_config['question_id'])
+        additional_info = {
+            'user_question': user_question,
+            'question_id': question_id,
+            'depth': self.tree_depth,
+        }
         if self.verbose:
             print(f"Reflecting on memory for sub-question: {sub_question}")
         memory_information = None
         if self.memory:
             # TODO: Try retrieving memory 
             memory_knowledge = "\n".join(self.memory)
-            extracted_memory = self.extractor.extract(question=sub_question, document=memory_knowledge)[0]
+            additional_info['memory_knowledge'] = copy.deepcopy(self.memory)
+            additional_info['question'] = sub_question
+            extracted_memory = self.extractor.extract(question=sub_question, document=memory_knowledge, additional_info=additional_info)[0]
             if extracted_memory['decision'] == 'relevant':
                 memory_information = extracted_memory['extracted_information']
         return memory_information
@@ -201,19 +212,25 @@ class ReasoningNode(Node, NodeMixin):
     def explore(self, question: Optional[str] = None) -> List[str]:
         if self.verbose:
             print(f"Exploring external knowledge base for sub-question: {question}")
+        additional_info = {
+            'user_question': copy.deepcopy(self.node_config['user_question']),
+            'question_id': copy.deepcopy(self.node_config['question_id']),
+            'depth': copy.deepcopy(self.tree_depth),
+        }
         queries_for_retriever = self.generator.generate_queries_for_retriever(question=question)[0]['queries']
         queries_for_retriever.append(question)  # Add the sub question to the queries for retriever to prevent the case where the generated query is wrong or empty
         retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=5)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
             retrieved_docs = sum(retrieved_docs, [])  # Flatten the list of lists
         retrieved_docs = [item['contents'] for item in retrieved_docs if 'contents' in item]  # Extract the content from the retrieved documents
-        breakpoint()
         retrieved_docs = list(set(retrieved_docs))  # Remove duplicates
 
         retrieved_information = ""
         for i, doc in enumerate(retrieved_docs):
             retrieved_information += f"Retrieved information {i+1}:\n{doc}\n"
-        extracted_retrieval_information = self.extractor.extract(question=question, document=retrieved_information)[0]
+        additional_info['retrieved_docs'] = retrieved_docs
+        additional_info['question'] = question
+        extracted_retrieval_information = self.extractor.extract(question=question, document=retrieved_information, additional_info=additional_info)[0]
         external_information = []
         if extracted_retrieval_information['decision'] == 'relevant':
             external_information = extracted_retrieval_information['extracted_information']
@@ -231,6 +248,12 @@ class ReasoningNode(Node, NodeMixin):
         if not intermediate_conclusions and not step_explored_information:
             return self.memory  # If there is no new information, return the current memory
         
+        additional_info = {
+            'user_question': copy.deepcopy(self.node_config['user_question']),
+            'question_id': copy.deepcopy(self.node_config['question_id']),
+            'depth': copy.deepcopy(self.tree_depth),
+        }
+        
         user_question = self.node_config['user_question']
         raw_memory = ""
         if self.memory:
@@ -247,7 +270,8 @@ class ReasoningNode(Node, NodeMixin):
             raw_memory += f"Information from external KB:\n{step_explored_information}\n----------\n"
         if raw_memory == "":
             return None
-        new_memory = self.extractor.extract(question=user_question, document=raw_memory)[0]
+        additional_info['raw_memory'] = raw_memory
+        new_memory = self.extractor.extract(question=user_question, document=raw_memory, additional_info=additional_info)[0]
         new_memory = new_memory['extracted_information']
         return new_memory
 

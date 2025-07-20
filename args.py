@@ -54,6 +54,12 @@ class GenerationArguments:
         default="agent_cache",
         metadata={"help": "Directory to store cache files."}
     )
+    reasoning_effort: str = field(
+        default="medium",
+        metadata={
+            "help": "Level of reasoning effort: 'high', 'medium', or 'low'."
+        }
+    )
 
 
 @dataclass

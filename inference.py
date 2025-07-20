@@ -53,11 +53,11 @@ if __name__ == "__main__":
     parser.add_argument("--data_name", type=str, default=None, help="Name of the dataset to use.")
     parser.add_argument("--question_id", type=str, default=None, help="Optional question ID.")
     parser.add_argument("--golden_answer", type=str, default=None, help="Optional golden answer.")
-    parser.add_argument("--generator_config", type=str, default="configs/eval_config/generator_config.yaml", help="Path to generator configuration file.")
-    parser.add_argument("--evaluator_config", type=str, default="configs/eval_config/evaluator_config.yaml", help="Path to evaluator configuration file.")
-    parser.add_argument("--extractor_config", type=str, default="configs/eval_config/extractor_config.yaml", help="Path to extractor configuration file.")
-    parser.add_argument("--retriever_config", type=str, default="configs/eval_config/retriever_config.yaml", help="Path to retriever configuration file.")
-    parser.add_argument("--mcts_config", type=str, default="configs/eval_config/MCTS_config.yaml", help="Path to MCTS configuration file.")
+    parser.add_argument("--generator_config", type=str, default="configs/infer/generator_config.yaml", help="Path to generator configuration file.")
+    parser.add_argument("--evaluator_config", type=str, default="configs/infer/evaluator_config.yaml", help="Path to evaluator configuration file.")
+    parser.add_argument("--extractor_config", type=str, default="configs/infer/extractor_config.yaml", help="Path to extractor configuration file.")
+    parser.add_argument("--retriever_config", type=str, default="configs/infer/retriever_config.yaml", help="Path to retriever configuration file.")
+    parser.add_argument("--mcts_config", type=str, default="configs/infer/MCTS_config.yaml", help="Path to MCTS configuration file.")
 
     args = parser.parse_args()
     assert args.question is not None or args.data_name is not None, "Either question or data_name must be provided."
@@ -125,9 +125,10 @@ if __name__ == "__main__":
             golden_answer=x['golden_answers'],
             config=mcts_args
             ), num_proc=128)
-        breakpoint()
+        dataset.save_to_disk(f"results/mcts/{args.data_name}")
     
     clear_agent_cache(generator, extractor, evaluator)
+    breakpoint()
 
 
 

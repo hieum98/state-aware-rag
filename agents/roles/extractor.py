@@ -28,13 +28,21 @@ class Extractor(LLMAgent):
             document: Union[str, List[str]],
             **kwargs
     ):  
+        addtional_info = kwargs.pop('additional_info', None)
         if isinstance(question, list) and len(question) > 1:
             kwargs['n'] = 1 # Always generate one response
+            if addtional_info is not None:
+                assert isinstance(addtional_info, list) and isinstance(addtional_info[0], dict), "additional_info must be a list of dictionaries when question is a list"
         if isinstance(question, str):
             question = [question]
             assert isinstance(document, str), "document must be a string when question is a string"
             document = [document]
+            if addtional_info is not None:
+                assert isinstance(addtional_info, dict)
+                addtional_info = [addtional_info]
         assert len(question) == len(document), "question, current_step_objective, and document must have the same length"
+        if addtional_info is not None:
+            assert len(question) == len(addtional_info), "question and additional_info must have the same length"
 
         batch = [
             self.extract_prompt.format(
@@ -49,6 +57,7 @@ class Extractor(LLMAgent):
             print("Questions:", question)
             print("Documents:", document)
         kwargs['output_schema'] = extract.ExtractOutput
+        kwargs['any_other_info'] = addtional_info
         responses = self.role_execute(batch, **kwargs)
         extracted_info = []
         for response in responses:

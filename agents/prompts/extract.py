@@ -33,13 +33,13 @@ Raw Data:
 """
 
 class ExtractOutput(pydantic.BaseModel):
-    decision: Literal['relevant', 'not_relevant'] = pydantic.Field(
-        ...,
-        description="The decision on whether the data is relevant to the question."
-    )
     information: list[str] = pydantic.Field(
         ...,
         description="A list of extracted information from the data that is relevant to the question"
+    )
+    decision: Literal['relevant', 'not_relevant'] = pydantic.Field(
+        ...,
+        description="The decision on whether the data is relevant to the question."
     )
     reasoning: str = pydantic.Field(
         ...,

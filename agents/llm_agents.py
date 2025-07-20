@@ -301,7 +301,6 @@ class LLMAgent:
         
         cached_responses = []
         to_compute_responses = []
-        to_save_additional_info = []
         for i, messages in enumerate(batch_messages):
             input_str = f"Messages: {messages},  kwargs: {kwargs}"
             input_hash = sha256(input_str.encode('utf-8')).hexdigest()
@@ -377,7 +376,7 @@ if __name__ == "__main__":
         # 'api_key': None,  # Set your API key if required
         # 'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://n0998.talapas.uoregon.edu:30000/v1', 
+        'url': 'http://ip-10-4-226-205:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,

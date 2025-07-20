@@ -186,7 +186,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://n0998:30000/v1', 
+        'url': 'http://ip-10-4-226-205:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -198,12 +198,12 @@ if __name__ == "__main__":
         'temperature': 1,  
         'n': 3, 
         'top_p': 0.9,
-        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
+        'max_tokens': 1024*8,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,
         'tensor_parallel_size': 1,
-        # 'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+        'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
     }
     generator = Generator(
         client_kwargs=online_model_kwargs, 
@@ -219,12 +219,12 @@ if __name__ == "__main__":
         'temperature': 0.1,  
         'n': 5, 
         'top_p': 0.9,
-        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
+        'max_tokens': 1024*8,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,
         'tensor_parallel_size': 1,
-        # 'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+        'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
     }
     evaluator = Evaluator(
         client_kwargs=online_model_kwargs, 
@@ -240,12 +240,12 @@ if __name__ == "__main__":
         'temperature': 0.1,  
         'n': 5, 
         'top_p': 0.9,
-        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
+        'max_tokens': 1024*8,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,
         'tensor_parallel_size': 1,
-        # 'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
+        'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
     }
     extractor = Extractor(
         client_kwargs=online_model_kwargs, 
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     )
 
     retriever_online_kwargs = {
-        "url": "http://n0998:5000/search",
+        "url": "http://ip-10-4-226-205:5000/search",
         "retrieval_topk": 64,
         "query_instruction": "query: ",
     }

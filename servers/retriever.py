@@ -22,8 +22,7 @@ if __name__ == "__main__":
     if config.encoder_name == 'e5':
         default_instruction = "query: {query}"
     elif config.encoder_name == 'qwen3':
-        task_description = 'Given a web search query, retrieve relevant passages that answer the query'
-        default_instruction = 'Instruct: {task_description}\nQuery:{query}'
+        default_instruction = 'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: {query}'
 
     # Load the faiss index and the corpus
     index_path = config.index_path

@@ -263,13 +263,13 @@ if __name__ == "__main__":
     # )
 
     retriever_online_kwargs = {
-        "url": "http://10.4.226.205:5000/search",
+        "url": "http://10.4.225.181:5000/search",
         "retrieval_topk": 64,
         "query_instruction": None,
     }
     retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    query = ["Who directed the film Breakup Buddies?"]
+    query = "Where is Ning Hao born?"
     # query = "When was the Declaration of Independence signed?"
-    results = retriever_agent.search(query, top_k=5, instruction='Please provide a detailed answer to the following question: {query}')
+    results = retriever_agent.search(query, top_k=5, instruction=None)
     breakpoint()

@@ -29,6 +29,28 @@ class EvaluateAnswerOutput(pydantic.BaseModel):
     )
 
 
+JUDGE_ANSWER_PROMPT = """You will be given a user_question and system_answer couple. Your task is to provide a 'total rating' scoring how well the system_answer answers the user concerns expressed in the user_question. Give your answer as a float on a scale of 0 to 10, where 0 means that the system_answer is not helpful at all, and 10 means that the answer completely and helpfully addresses the question. You will may or may not be given a 'correct_answer' to compare against, but you should always provide a rating based on the quality of the system_answer.
+
+Here are some examples: {examples}
+Now, please evaluate the following question and answer:
+User Question: {user_question}
+System Answer: {system_answer}
+Correct Answer (Optional): {correct_answer}
+"""
+
+class JudgeAnswerOutput(pydantic.BaseModel):
+    total_rating: float = pydantic.Field(
+        ...,
+        ge=0.0,
+        le=10.0,
+        description="A float rating from 0 to 10 indicating how well the system answer addresses the user question."
+    )
+    reasoning: str = pydantic.Field(
+        ...,
+        description="A detailed explanation of the rating, including specific aspects of the system answer that contributed to the score."
+    )
+
+
 PATH_AWARE_PROMPT = """You are an expert evaluator tasked with assessing the quality of a single step within a complex reasoning process. Your evaluation must be objective, critical, and strictly adhere to the provided rubric.
 
 ### Context:
@@ -198,42 +220,58 @@ class MajorityVoteOutput(pydantic.BaseModel):
     )
 
 
-JUDGE_METRIC_PROMPT = """You are an expert assistant specializing in evaluating the quality of answers to questions. Your task is to assess the correctness of a model's generated output, which includes both its reasoning process and its final answer.
+SYNTHESIZE_FINAL_ANSWER_PROMPT = """You are an expert in argumentative synthesis and logical reasoning. Your task is to act as an impartial adjudicator and synthesizer. You will not generate a new answer from scratch, but will instead construct a superior answer by critically analyzing and integrating the provided candidate answers. To synthesize a single, comprehensive, and robust final answer and its corresponding reasoning path from a set of candidate reasoning paths. The synthesized answer should be more accurate, coherent, and well-supported than any individual candidate.
 
-Instructions:
-1. Question Analysis: Carefully read and understand the question. Identify key components and clarify what is being asked.
-2. Answer Evaluation: First, compare the final conclusion of the predicted answer against the correct answers. If it matches any one of the correct answers, the evaluation is complete. If the final answer is incorrect or incomplete, you must then analyze the full reasoning process. Search for any step or intermediate conclusion where the correct answer is explicitly stated or strongly implied.
-3. Prediced Answer Analysis: If the predicted answer is incorrect, analyze the answer and classify it into one of the following categories:
-    - Lacking Information: There are a statement or reasoning that is missing from the answer. It can be a missing fact, a missing step in the reasoning, or an incomplete explanation.
-    - Incorrect Reasoning: The reasoning process contains errors or logical flaws.
-    - Incomplete Answer: The answer is partially correct but does not fully address the question or misses key details.
-    - Other: Any other issues that do not fit the above categories.
-4. Correctness Decision: Based on your evaluation, determine the decision using these rules:
-    - Mark as true (Correct) if: The model's final answer semantically matches the correct answer OR the correct answer is clearly present or implied in the model's reasoning steps, even if the final answer is different or flawed.
-    - Mark as false (Incorrect) if: The correct answer is NOT found in the final answer OR anywhere in the reasoning path.
+## Instructions:
+Phase I: Deconstruction and Quality Assessment:
+    - Deconstruct Each Candidate: For each candidate answer, systematically break it down into its core components: 
+        - Conclusion: What is the final claim or answer?
+        - Premises: What are the individual pieces of evidence, facts, or assumptions used?
+        - Reasoning Path: What are the logical steps or inferences used to connect the premises to the conclusion?
+    - Assess Individual Quality: Evaluate each candidate's argument independently based on these criteria :
+        - Factual Accuracy: Are the premises verifiably true and from reliable sources?
+        - Logical Soundness: Is the reasoning path logical and free from fallacies?
+        - Sufficiency: Is the evidence provided strong enough and sufficient to justify the conclusion?
+Phase II: Conflict Mapping and Adjudication: 
+    - Identify Points of Convergence and Divergence: Compare the deconstructed arguments. Create a mental "synthesis matrix" to map out where the candidates agree and disagree. Specifically identify:
+        - Consensus: Points where all or most candidates agree on facts or reasoning.
+        - Contradiction: Points where candidates present conflicting facts or draw opposing conclusions from the same facts.
+        - Unique Insights: Valuable premises or reasoning steps that are present in only one or a few candidates.
+    - Adjudicate Conflicts: Where contradictions exist, you must resolve them using a clear hierarchy of resolution strategies:
+        - For Factual Conflicts: Prioritize evidence from more authoritative, recent, or verifiable sources. Discard claims based on demonstrably false information.
+        - For Logical Conflicts: Discard arguments that rely on logical fallacies. Prefer reasoning paths that are more direct, valid, and relevant to the question.
+        - For Value/Goal Conflicts (where arguments optimize for different outcomes): Acknowledge the different goals. Attempt to find a collaborative "win-win" solution that integrates the valid parts of each argument. If this is not possible, synthesize the final answer by using majority consensus. 
+Phase III: Recomposition and Final Argument Construction: 
+    - Construct the Synthesized Reasoning Path: This is the most critical part of your output. Do not simply summarize the candidates. Build a new, superior line of reasoning. Your reasoning path should be a logical progression, step-by-step, that leads to the final answer. It should:
+        - Start with the most robust premises, integrating the best evidence from all candidates.
+        - Use the strongest logical connections, avoiding any fallacies or weak inferences.
+        - Address any gaps or weaknesses identified in the candidates' reasoning.
+        - Self-contained: Ensure that the reasoning path is self-contained, which should be understandable and convincing on its own, without needing to refer back to the candidates.
+    - State the Final Synthesized Answer: Based on your newly constructed reasoning path, state the final, definitive answer to the original question.
+    - Perform a Final Self-Critique: Before concluding, review your synthesized answer and reasoning. Ask yourself: "Is this the most logical and best-supported conclusion possible based only on the provided candidate information? Have I fairly represented and adjudicated their points? Is my own reasoning path clear and free of fallacies? Is the final resoning path coherent, logical, and self-contained? Is the final answer is cosistent with the reasoning path and the original question? Does it comprehensively address the question and integrate the best elements of all candidates?" Refine if necessary.
 
 Here are some examples: {examples}
 
-Now, please evaluate the following question and answers:
+Now, please synthesize the final answer and the reasoning based on the following question and reasoning paths:
 Question: {question}
-Correct Answer: {correct_answer}
-Predicted Answer: {predicted_answer}
+Candidate Answers:
+{reasoning_paths}
 """
 
-class LLMJudgeMetricOutput(pydantic.BaseModel):
-    decision: bool = pydantic.Field(
+class SynthesizeFinalAnswerOutput(pydantic.BaseModel):
+    final_answer: str = pydantic.Field(
         ...,
-        description="True if the predicted answer is correct, False otherwise."
+        description="The final synthesized answer to the question, derived from the candidate answers."
     )
-    error_type: Optional[str] = pydantic.Field(
+    final_reasoning_path: str = pydantic.Field(
         ...,
-        description="Type of error if the answer is incorrect. Possible values: 'lacking_information', 'incorrect_reasoning', 'incomplete_answer', 'correct_answer', 'other' or None if the answer is correct."
-    )
-    reasoning: str = pydantic.Field(
-        ...,
-        description="Detailed reasoning of the LLM's decision."
+        description="The reasoning path that leads to the final answer, integrating the best elements of all candidate answers."
     )
     confidence: Literal['high', 'medium', 'low'] = pydantic.Field(
         ...,
         pattern=r"^(high|medium|low)$",
+        description="The confidence level in the final answer, indicating how strongly the synthesis supports it."
     )
+    
+
+

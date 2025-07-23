@@ -33,61 +33,11 @@ class Evaluator(LLMAgent):
         self.majority_vote_prompt = evaluate.MAJORITY_VOTE_PROMPT
         self.majority_vote_examples = None
 
-        self.llm_judge_metric_prompt = evaluate.JUDGE_METRIC_PROMPT
+        self.llm_judge_metric_prompt = evaluate.JUDGE_ANSWER_PROMPT
         self.llm_judge_metric_examples = None
 
-    def evaluate_and_analyze_answer(
-            self,
-            question: Union[str, List[str]],
-            correct_answer: Union[str, List[str], List[List[str]]],
-            predicted_answer: Union[str, List[str]],
-            **kwargs: Any
-    ):
-        if isinstance(question, str):
-            question = [question]
-            assert isinstance(predicted_answer, str), "predicted_answer must be a string when question is a string."
-            predicted_answer = [predicted_answer]
-            correct_answer = [correct_answer]
-        if len(question) > 1:
-            kwargs['n'] = 1
-        
-        assert len(question) == len(predicted_answer) == len(correct_answer), "The lengths of question, predicted_answer, and correct_answer must match."
-        batch = [
-            self.llm_judge_metric_prompt.format(
-                question=q,
-                correct_answer=ca,
-                predicted_answer=pa,
-                examples=self.llm_judge_metric_examples if self.llm_judge_metric_examples else "Not provided."
-            )
-            for q, ca, pa in zip(question, correct_answer, predicted_answer)
-        ]
-        batch = [[{'role': 'user', 'content': x}] for x in batch]  # Format for the client
-        if self.verbose:
-            print("Generating evaluations for final answers:")
-            print("Questions:", question)
-            print("Correct Answers:", correct_answer)
-            print("Predicted Answers:", predicted_answer)
-        kwargs['output_schema'] = evaluate.LLMJudgeMetricOutput
-        responses = self.role_execute(batch, **kwargs)
-        if len(question) == 1 and len(responses) > 1:
-            # Majority vote
-            decision = [res.get('decision', False) for res in responses]
-            confidence = [res.get('confidence', 0.1) for res in responses]
-            decision = sum(decision) / len(decision) if len(decision) > 0 else 0.0
-            confidence = sum(confidence) / len(confidence) if len(confidence) > 0 else 0.1
-            decision = decision >= 0.5  # Convert to boolean
-            error_type = [res.get('error_type', 'None') for res in responses]
-            reasoning = [res.get('reasoning', '') for res in responses]
-            # Convert error_type and reasoning to a single string to make it consistent. Make sure that we can reconstruct the original list later.
-            error_type = json.dumps(error_type)
-            reasoning = json.dumps(reasoning)
-            responses = [{
-                'decision': decision,
-                'confidence': confidence,
-                'error_type': error_type,
-                'reasoning': reasoning
-            }]
-        return responses
+        self.synthesize_final_answer_prompt = evaluate.SYNTHESIZE_FINAL_ANSWER_PROMPT
+        self.synthesize_final_answer_examples = None
 
     def evaluate_final_answer(
             self,
@@ -140,13 +90,57 @@ class Evaluator(LLMAgent):
             decision = sum(decision) / len(decision) if len(decision) > 0 else 0.0
             confidence = sum(confidence) / len(confidence) if len(confidence) > 0 else 0.1
             decision = decision >= 0.5
-            return [decision * confidence]
+            return [{'decision': decision, 'confidence': confidence}]
         results = []
         for response in responses:
-            score = response.get('decision', False) * response.get('confidence', 0.1)
-            results.append(score)
+            score = response.get('decision', False) 
+            conf = response.get('confidence', 0.1)
+            results.append({'decision': score, 'confidence': conf})
         return results
     
+    def judge_answer(self, 
+            user_question: Union[str, List[str]],
+            system_answer: Union[str, List[str]],
+            correct_answer: Optional[Union[str, List[str], List[List[str]]]] = None,
+            **kwargs: Any
+    ):
+        if isinstance(user_question, str):
+            user_question = [user_question]
+            system_answer = [system_answer]
+            if correct_answer is not None:
+                correct_answer = [correct_answer]
+        if len(user_question) > 1:
+            kwargs['n'] = 1
+        
+        assert len(user_question) == len(system_answer), "The lengths of user_question and system_answer must match."
+        if correct_answer is not None:
+            assert len(user_question) == len(correct_answer), "The lengths of user_question and correct_answer must match."
+        
+        batch = [
+            self.llm_judge_metric_prompt.format(
+                user_question=uq,
+                system_answer=sa,
+                correct_answer=ca if ca else "Not provided.",
+                examples=self.llm_judge_metric_examples if self.llm_judge_metric_examples else "Not provided."
+            )
+            for uq, sa, ca in zip(user_question, system_answer, correct_answer or ["Not provided."] * len(user_question))
+        ]
+        batch = [[{'role': 'user', 'content': x}] for x in batch]
+        if self.verbose:
+            print("Generating evaluations for answers:")
+            print("User Questions:", user_question)
+            print("System Answers:", system_answer)
+        kwargs['output_schema'] = evaluate.JudgeAnswerOutput
+        response = self.role_execute(batch, **kwargs)
+        results = []
+        for res in response:
+            score = res.get('total_rating', 0.0)
+            results.append(score)
+        if len(user_question) == 1 and len(results) > 1:
+            # Majority vote
+            results = [sum(results) / len(results)]
+        return results
+
     def evaluate_path_step(
             self,
             main_question: Union[str, List[str]],
@@ -390,12 +384,45 @@ class Evaluator(LLMAgent):
             print("Questions:", question)
             print("Answers:", answers)
         kwargs['output_schema'] = evaluate.MajorityVoteOutput
-        response = self.role_execute(batch, **kwargs)
-        results = []
-        for res in response:
-            answer = res.get("final_answer")
-            results.append(answer)
-        return results
+        response = self.role_execute(batch, **kwargs)[0]
+        return response.get("final_answer", "No valid answer generated.")  # Return the final answer from the response
+
+    def synthesize_final_answer(
+            self,
+            question: Union[str, List[str]],
+            reasoning_paths: Union[List[str], List[List[str]]],
+            **kwargs: Any
+    ):
+        if isinstance(question, str):
+            question = [question]
+            reasoning_paths = [reasoning_paths]
+        kwargs['n'] = 1 # Generate only one response
+        assert len(question) == len(reasoning_paths), "The lengths of question and reasoning_paths must match."
+        batch = []
+        for q, rp in zip(question, reasoning_paths):
+            assert isinstance(q, str), "question must be a string."
+            assert isinstance(rp, list), "reasoning_paths must be a list of strings."
+            rp = [f"Candidate {i+1}: {path}" for i, path in enumerate(rp)]
+            rp = "\n".join(rp)
+            item = self.synthesize_final_answer_prompt.format(
+                question=q,
+                reasoning_paths=rp,
+                examples=self.synthesize_final_answer_examples if self.synthesize_final_answer_examples else "Not provided."
+            )
+            batch.append([{'role': 'user', 'content': item}])
+        if self.verbose:
+            print("Synthesizing final answers:")
+            print("Questions:", question)
+            print("Reasoning Paths:", reasoning_paths)
+        kwargs['output_schema'] = evaluate.SynthesizeFinalAnswerOutput
+        response = self.role_execute(batch, **kwargs)[0]
+        final_answer = response.get("final_answer", "No valid answer generated.")
+        final_reasoning = response.get("final_reasoning_path", "No valid reasoning generated.")
+        if self.verbose:
+            print("Final Answer:", final_answer)
+            print("Final Reasoning Path:", final_reasoning)
+        return final_answer, final_reasoning
+    
 
 if __name__ == "__main__":
     online_model_kwargs = {

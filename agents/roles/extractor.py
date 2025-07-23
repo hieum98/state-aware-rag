@@ -84,6 +84,8 @@ class Extractor(LLMAgent):
                         all_info.extend(item['extracted_information'])
                     elif isinstance(item['extracted_information'], str):
                         all_info.append(item['extracted_information'])
+                # Deduplicate the information
+                all_info = list(set(all_info))
                 extracted_info = [{
                     'decision': decision,
                     'extracted_information': all_info

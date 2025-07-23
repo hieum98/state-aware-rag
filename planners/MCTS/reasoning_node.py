@@ -106,6 +106,7 @@ class ReasoningNode(Node, NodeMixin):
         elif node_type == NodeType.FINAL_ANSWER:
             assert answer is not None, "Answer must be provided for FINAL_ANSWER nodes."
             self.state['node_content'] = answer
+            self.state['detailed_answer'] = reasoning if reasoning is not None else ""  # Optional reasoning for FINAL_ANSWER nodes
             self.state['confidence'] = confidence if confidence is not None else 1.0  # Default confidence is 1.0 if not provided
         elif node_type == NodeType.SUB_QA_NODE:
             assert question is not None, "Question must be provided for SUBQUESTION nodes."
@@ -152,6 +153,7 @@ class ReasoningNode(Node, NodeMixin):
         while current_node is not None:
             path.append(current_node)
             current_node = current_node.parent
+        breakpoint()
         return path[::-1] # Reverse the path to get it from root to current node
     
     def get_reasoning_trace(self, path: List["ReasoningNode"]) -> str:
@@ -166,16 +168,7 @@ class ReasoningNode(Node, NodeMixin):
         reasoning_trace = []
         reasoning_scores = []
         for i, node in enumerate(path):
-            if node.node_type == NodeType.SUB_QA_NODE:
-                reasoning_trace.append(node.state['node_content'])
-                reasoning_scores.append(node.state['confidence'])
-            elif node.node_type == NodeType.SELF_CORRECTED_NODE:
-                # Replace the last step in the reasoning trace with the self-corrected answer
-                step_content = node.state['node_content']
-                step_score = node.state['confidence']
-                reasoning_trace[-1] = step_content 
-                reasoning_scores[-1] = step_score
-            elif node.node_type == NodeType.SYNTHESIS_NODE:
+            if node.node_type in [NodeType.SUB_QA_NODE, NodeType.SELF_CORRECTED_NODE, NodeType.SYNTHESIS_NODE]:
                 reasoning_trace.append(node.state['node_content'])
                 reasoning_scores.append(node.state['confidence'])
         if len(reasoning_trace) == 0:
@@ -184,7 +177,7 @@ class ReasoningNode(Node, NodeMixin):
         for i, step in enumerate(reasoning_trace):
             trace += f"Step {i+1}: {step}\n"
         if path[-1].node_type == NodeType.FINAL_ANSWER:
-            trace += f"Final answer: {path[-1].state['node_content']}."
+            trace += f"{path[-1].state['detailed_answer']}.\nFinal answer: {path[-1].state['node_content']}."
             reasoning_scores.append(path[-1].state['confidence'])
         return trace, reasoning_scores
     
@@ -313,7 +306,12 @@ class ReasoningNode(Node, NodeMixin):
         for item in response:
             answer = item['answer']
             if answer is None or answer.strip() == "":
-                answer = f"{item['detailed_answer']}. \nReasoning: {item['reasoning']}" 
+                answer = f"{item['detailed_answer']}." 
+            detailed_answer = ""
+            if item['detailed_answer'] is not None and item['detailed_answer'].strip() != "":
+                detailed_answer = item['detailed_answer']
+            if item['reasoning'] is not None and item['reasoning'].strip() != "":
+                detailed_answer += f". {item['reasoning']}"
             if self.verbose:
                 print(f"Generated final answer: {answer}")
             if answer in all_answers:
@@ -324,6 +322,7 @@ class ReasoningNode(Node, NodeMixin):
                 node_type=NodeType.FINAL_ANSWER,
                 depth=self.tree_depth + 1,
                 answer=answer,
+                reasoning=detailed_answer,
                 confidence=item['confidence'],
                 **self.node_config
             )
@@ -683,6 +682,7 @@ class ReasoningNode(Node, NodeMixin):
         if golden_answer:
             em_score = self.evaluator.evaluate_with_em(golden_answer, answer)[0]
             judge_score = self.evaluator.evaluate_final_answer(question=user_question, correct_answer=golden_answer, predicted_answer=answer)[0]
+            judge_score = judge_score['decision'] * judge_score['confidence'] 
 
             answer_side_reward = 0.5*(em_score + judge_score) * answer_confidence
         

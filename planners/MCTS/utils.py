@@ -130,6 +130,7 @@ def search(
         max_depth=max_depth,
         golden_answer=golden_answer if use_golden_answer else None,
         user_question=user_question,
+        question_id=question_id,
         verbose=False,
     )
     for i in range(num_rollouts):
@@ -146,16 +147,25 @@ def search(
     nodes = []
     solutions = []
     answers = []
+    reasoning_paths = []
     for _, _, node in RenderTree(root_node):
         nodes.append(node)
         if node.node_type is NodeType.FINAL_ANSWER:
             answers.append(node.state['node_content'])
             solutions.append(node.get_node())
+            reasoning_path = node.get_path()
+            reasoning_path, _ = node.get_reasoning_trace(path=reasoning_path)
+            if reasoning_path is not None:
+                reasoning_paths.append(reasoning_path)
+            else:
+                # If the reasoning path is None, we only append the node content of the final answer
+                reasoning_paths.append(node.state['detailed_answer'])
     # Major voting to find the best solution from the solution nodes of the final tree
     if len(answers) == 0:
         print("No valid solution nodes found in the reasoning tree.")
         final_answer = None
-    final_answer = evaluator.majority_vote(question=user_question, answers=answers)[0]
+    # final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+    final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=reasoning_paths)
     
     if save_tree:
         # check if the save directory does not exist, create it
@@ -166,7 +176,7 @@ def search(
                 node_content['reward'] = mcts_searcher.Q[node]
                 node_content['visits'] = mcts_searcher.N[node]
                 f.write(json.dumps(node_content) + "\n")
-    return final_answer, solutions
+    return final_answer, final_reasoning, reasoning_paths
 
 
 def clear_agent_cache(generator, extractor, evaluator):
@@ -264,7 +274,7 @@ if __name__ == "__main__":
 
     question = "Where was the director of film Breakup Buddies born?"
 
-    final_answer, solution = search(
+    final_answer, final_reasoning, reasoning_paths = search(
         generator=generator,
         evaluator=evaluator,
         extractor=extractor,
@@ -275,7 +285,7 @@ if __name__ == "__main__":
         max_depth=7,
         golden_answer="",
         # MCTS parameters
-        num_rollouts=16,
+        num_rollouts=5,
         use_golden_answer=False,
         save_tree=True,
         save_dir="mcts_data",

@@ -546,46 +546,48 @@ class LLMJudge(BaseMetric):
         golden_answers_list = self.get_dataset_answer(data)
 
         judge_list = []
-        # for q, a, ga in tqdm.tqdm(zip(question_list, pred_list, golden_answers_list)):
-        #     response = self.llm_pipeline.evaluate_and_analyze_answer(
-        #         question=q,
-        #         correct_answer=ga,
-        #         predicted_answer=a
-        #     )[0]
-        #     judge = response.get("decision", False)
-        #     error_type = response.get("error_type", None)
-        #     reasoning = response.get("reasoning", None)
-        #     judge_list.append({
-        #         "decision": judge,
-        #         "error_type": error_type,
-        #         "reasoning": reasoning
-        #     })
         assert len(question_list) == len(pred_list) == len(golden_answers_list), "Length of question, pred and golden_answers must be the same."
         for i in tqdm.tqdm(range(len(question_list), step=64)):
             batch_questions = question_list[i:i+64]
             batch_preds = pred_list[i:i+64]
             batch_golden_answers = golden_answers_list[i:i+64]
 
-            responses = self.llm_pipeline.evaluate_and_analyze_answer(
-                question=batch_questions,
+            responses = self.llm_pipeline.judge_answer(
+                user_question=batch_questions,
                 correct_answer=batch_golden_answers,
-                predicted_answer=batch_preds
+                system_answer=batch_preds
             )
-            for response in responses:
-                judge = response.get("decision", False)
-                error_type = response.get("error_type", None)
-                reasoning = response.get("reasoning", None)
+            responses_without_golden = self.llm_pipeline.judge_answer(
+                user_question=batch_questions,
+                system_answer=batch_preds,
+                correct_answer=None
+            )
+            assert len(responses) == len(batch_questions), "Length of responses must match length of questions."
+            assert len(responses_without_golden) == len(batch_questions), "Length of responses without golden answers must match length of questions."
+            for res1, res2 in zip(responses, responses_without_golden):
+                score_with_golden = res1.get('total_rating', 0.0)
+                score_without_golden = res2.get('total_rating', 0.0)
+                reasoning_with_golden = res1.get('reasoning', "")
+                reasoning_without_golden = res2.get('reasoning', "")
+                score_with_golden = float(score_with_golden)/10 + 1
+                score_without_golden = float(score_without_golden)/10 + 1
                 judge_list.append({
-                    "decision": judge,
-                    "error_type": error_type,
-                    "reasoning": reasoning
+                    'score_with_golden': score_with_golden,
+                    'score_without_golden': score_without_golden,
+                    'reasoning_with_golden': reasoning_with_golden,
+                    'reasoning_without_golden': reasoning_without_golden,
                 })
 
-        metric_score_list = [item['decision'] for item in judge_list]
+        metric_with_golden = [res['score_with_golden'] for res in judge_list]
+        metric_without_golden = [res['score_without_golden'] for res in judge_list]
 
-        score = sum(metric_score_list) / len(metric_score_list)
+        score_with_golden = sum(metric_with_golden) / len(metric_with_golden)
+        score_without_golden = sum(metric_without_golden) / len(metric_without_golden)
 
-        return {"llm_judge_score": score}, judge_list
+        return {
+            "llm_judge_with_golden": score_with_golden,
+            "llm_judge_without_golden": score_without_golden
+        }, judge_list
 
 
 class CountToken(BaseMetric):

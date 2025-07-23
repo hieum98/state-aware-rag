@@ -56,10 +56,14 @@ class ModelClient:
             else:
                 print(f"Model {self.model_name} does not support structured output. Ignoring output schema.")
         model_kwargs = self.prepare_model_kwargs(**kwargs)
+        n = model_kwargs.get('n', 1)
         flag = True
         i = 0
         # Retry logic for handling till the response is valid
+        valid_choices = []
         while flag:
+            if len(valid_choices) == model_kwargs.get('n', 1):
+                break
             response = self.completion(messages=messages, **model_kwargs)
             # If the response is None or any choice is None or empty, retry
             if response is None:
@@ -70,16 +74,24 @@ class ModelClient:
             for choice in response.choices:
                 if choice.message.content in [None, '', ' ', 'null']:
                     check_valid.append(False)
-                    break
-                check_valid.append(True)
+                else:
+                    valid_choices.append(choice)
+                    check_valid.append(True)
             if all(check_valid):
                 flag = False
             i += 1
+            # Sleep for a short duration to avoid overwhelming the API
+            time.sleep(10)
+            model_kwargs['max_tokens'] = model_kwargs.get('max_tokens', 8192) + 1000  # Increase max tokens for the next attempt
+            model_kwargs['n'] = model_kwargs.get('n', 1) + 1  # Increase the number of samples for the next attempt
             if i > 10:  # Retry limit
                 print("Retry limit reached. Returning empty response.")
-
+                print(f"Messages: {messages}")
+                print(f"Response: {response}")
+        assert len(valid_choices) >= model_kwargs.get('n', 1), "Not enough valid choices returned from the model."    
+        valid_choices = valid_choices[:n]  # Limit to n valid choices
         all_outputs = []
-        for choice in response.choices: # type: ignore
+        for choice in valid_choices:
             reasoning = None
             if should_return_reasoning:
                 try:

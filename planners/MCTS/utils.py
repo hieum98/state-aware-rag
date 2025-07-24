@@ -201,6 +201,18 @@ if __name__ == "__main__":
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
     }
+    api_model_kwargs = {
+        # 'model_name': 'bedrock/us.anthropic.claude-opus-4-20250514-v1:0',
+        'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'url': None,  # Use default URL for the model
+        'api_key': None,  # Set your API key if required
+        'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
+        # 'model_name': 'openai/qwen3-8B', 
+        # 'url': 'http://ip-10-4-226-205:30000/v1', 
+        # 'api_key': 'your_api_key_here',  # Replace with your actual API key
+        # 'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
+        'concurrency': 64,
+    }
     generate_kwargs = {
         # For creative tasks (creative writing) set it ~ 1, 
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
@@ -248,7 +260,7 @@ if __name__ == "__main__":
         # For logical or factual tasks (summarization, coding, analysis) set it ~ 0
         # For general conversation set it ~ 0.7
         'temperature': 0.1,  
-        'n': 5, 
+        'n': 1, 
         'top_p': 0.9,
         'max_tokens': 1024*8,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
@@ -258,7 +270,7 @@ if __name__ == "__main__":
         'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
     }
     extractor = Extractor(
-        client_kwargs=online_model_kwargs, 
+        client_kwargs=api_model_kwargs, 
         generate_kwargs=extract_kwargs, 
         # verbose=True,
         use_cache=True,
@@ -285,7 +297,7 @@ if __name__ == "__main__":
         max_depth=7,
         golden_answer="",
         # MCTS parameters
-        num_rollouts=5,
+        num_rollouts=10,
         use_golden_answer=False,
         save_tree=True,
         save_dir="mcts_data",

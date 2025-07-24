@@ -8,11 +8,14 @@ from functools import partial
 from pebble import ThreadPool
 import openai
 import pydantic
+import litellm
 from litellm import completion
 from litellm.utils import supports_response_schema
 from tqdm import tqdm
 
 from agents.utils import convert_confidence_to_score, extract_info_from_text
+
+litellm.drop_params=True
 
 
 class ModelClient:
@@ -57,12 +60,11 @@ class ModelClient:
                 print(f"Model {self.model_name} does not support structured output. Ignoring output schema.")
         model_kwargs = self.prepare_model_kwargs(**kwargs)
         n = model_kwargs.get('n', 1)
-        flag = True
         i = 0
         # Retry logic for handling till the response is valid
         valid_choices = []
-        while flag:
-            if len(valid_choices) == model_kwargs.get('n', 1):
+        while True:
+            if len(valid_choices) >= n:
                 break
             response = self.completion(messages=messages, **model_kwargs)
             # If the response is None or any choice is None or empty, retry
@@ -70,25 +72,22 @@ class ModelClient:
                 continue
             if not hasattr(response, 'choices') or not response.choices:
                 continue
-            check_valid = []
-            for choice in response.choices:
-                if choice.message.content in [None, '', ' ', 'null']:
-                    check_valid.append(False)
-                else:
-                    valid_choices.append(choice)
-                    check_valid.append(True)
-            if all(check_valid):
-                flag = False
+            # remove empty choices
+            _valid_choices = [choice for choice in response.choices if isinstance(choice.message.content, str) and choice.message.content.strip() != '']
+            valid_choices.extend(_valid_choices)
             i += 1
             # Sleep for a short duration to avoid overwhelming the API
-            time.sleep(10)
+            time.sleep(1)
             model_kwargs['max_tokens'] = model_kwargs.get('max_tokens', 8192) + 1000  # Increase max tokens for the next attempt
             model_kwargs['n'] = model_kwargs.get('n', 1) + 1  # Increase the number of samples for the next attempt
+            if not 'claude' in self.model_name and self.reasoning_effort is None:
+                model_kwargs['temperature'] = model_kwargs.get('temperature', 0.7) + 0.1  # Increase temperature for the next attempt
             if i > 10:  # Retry limit
-                print("Retry limit reached. Returning empty response.")
+                print("Retry limit reached. Returning the valid choices found so far.")
                 print(f"Messages: {messages}")
                 print(f"Response: {response}")
-        assert len(valid_choices) >= model_kwargs.get('n', 1), "Not enough valid choices returned from the model."    
+        if len(valid_choices) == 0:
+            return index, [None]
         valid_choices = valid_choices[:n]  # Limit to n valid choices
         all_outputs = []
         for choice in valid_choices:
@@ -150,9 +149,15 @@ class LiteLLMClient(ModelClient):
                 assert issubclass(output_schema, pydantic.BaseModel), "Output schema must be a subclass of pydantic.BaseModel"
             else:
                 print(f"Model {self.model_name} does not support structured output. Ignoring output schema.")
+        # if bedrock model, use reasoning_effort to set the reasoning effort
+        if 'claude' in self.model_name and reasoning_effort is not None:
+            temperature = 1.0
+        else:
+            temperature = kwargs.get('temperature', self.temperature)
+            
         model_kwargs = {
             'model': self.model_name,
-            'temperature': kwargs.get('temperature', self.temperature),
+            'temperature': temperature,
             'max_tokens': kwargs.get('max_tokens', self.max_tokens),
             "top_p": kwargs.get('top_p', self.top_p) if reasoning_effort is None else None,
             'n': kwargs.get('n', self.num_samples),

@@ -547,7 +547,7 @@ class LLMJudge(BaseMetric):
 
         judge_list = []
         assert len(question_list) == len(pred_list) == len(golden_answers_list), "Length of question, pred and golden_answers must be the same."
-        for i in tqdm.tqdm(range(len(question_list), step=64)):
+        for i in tqdm.tqdm(range(0, len(question_list), 64)):
             batch_questions = question_list[i:i+64]
             batch_preds = pred_list[i:i+64]
             batch_golden_answers = golden_answers_list[i:i+64]
@@ -564,18 +564,12 @@ class LLMJudge(BaseMetric):
             )
             assert len(responses) == len(batch_questions), "Length of responses must match length of questions."
             assert len(responses_without_golden) == len(batch_questions), "Length of responses without golden answers must match length of questions."
-            for res1, res2 in zip(responses, responses_without_golden):
-                score_with_golden = res1.get('total_rating', 0.0)
-                score_without_golden = res2.get('total_rating', 0.0)
-                reasoning_with_golden = res1.get('reasoning', "")
-                reasoning_without_golden = res2.get('reasoning', "")
-                score_with_golden = float(score_with_golden)/10 + 1
-                score_without_golden = float(score_without_golden)/10 + 1
+            for s1, s2 in zip(responses, responses_without_golden):
+                score_with_golden = float(s1)/10
+                score_without_golden = float(s2)/10
                 judge_list.append({
                     'score_with_golden': score_with_golden,
                     'score_without_golden': score_without_golden,
-                    'reasoning_with_golden': reasoning_with_golden,
-                    'reasoning_without_golden': reasoning_without_golden,
                 })
 
         metric_with_golden = [res['score_with_golden'] for res in judge_list]
@@ -583,7 +577,6 @@ class LLMJudge(BaseMetric):
 
         score_with_golden = sum(metric_with_golden) / len(metric_with_golden)
         score_without_golden = sum(metric_without_golden) / len(metric_without_golden)
-
         return {
             "llm_judge_with_golden": score_with_golden,
             "llm_judge_without_golden": score_without_golden

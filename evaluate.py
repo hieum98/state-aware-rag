@@ -24,18 +24,21 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
             f1_score, f1_detail = f1_metric.calculate_metric(data)
             data = data.add_column('f1_detail', f1_detail)
             results['f1'] = f1_score
+            print(f"F1 Score: {f1_score}")
         elif metric == 'em':
             assert 'pred' in data.features, "Dataset must contain 'pred' field."
             em_metric = ExactMatch(config=metric_config)
             em_score, em_detail = em_metric.calculate_metric(data)
             data = data.add_column('em_detail', em_detail)
             results['em'] = em_score
+            print(f"Exact Match Score: {em_score}")
         elif metric == 'sub_em':
             assert 'pred' in data.features, "Dataset must contain 'pred' field."
             sub_em_metric = Sub_ExactMatch(config=metric_config)
             sub_em_score, sub_em_detail = sub_em_metric.calculate_metric(data)
             data = data.add_column('sub_em_detail', sub_em_detail)
             results['sub_em'] = sub_em_score
+            print(f"Sub Exact Match Score: {sub_em_score}")
         elif metric == 'retrieval_recall':
             assert 'retrieval_result' in data.features, "Dataset must contain 'retrieval_result' field."
             retrieval_recall_topk = kwargs.get('retrieval_recall_topk', 5)
@@ -46,6 +49,7 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
             retrieval_recall_score, retrieval_recall_detail = retrieval_recall_metric.calculate_metric(data)
             data = data.add_column(f"retrieval_recall_detail_{retrieval_recall_topk}", retrieval_recall_detail)
             results['retrieval_recall'] = retrieval_recall_score
+            print(f"Retrieval Recall Score (Top-{retrieval_recall_topk}): {retrieval_recall_score}")
         elif metric == 'llm_judge':
             assert 'pred' in data.features and 'golden_answers' in data.features, "Dataset must contain 'pred' and 'golden_answers' fields."
             default_llm_setting = {
@@ -74,6 +78,7 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
             llm_judge_score, llm_judge_detail = llm_judge_metric.calculate_metric(data)
             data = data.add_column('llm_judge_detail', llm_judge_detail)
             results['llm_judge'] = llm_judge_score
+            print(f"LLM Judge Score: {llm_judge_score}")
         else:
             raise ValueError(f"Unknown metric: {metric}")
         

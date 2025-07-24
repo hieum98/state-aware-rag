@@ -116,6 +116,73 @@ if __name__ == "__main__":
             dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', '2wikimultihopqa', split='dev')
             # Randomly select 1000 samples from the dataset for testing
             dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'hotpotqa':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'hotpotqa', split='dev')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'musique':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'musique', split='dev')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'simpleqa':
+            dataset = datasets.load_dataset('basicv8vc/SimpleQA', split='test')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+            dataset = dataset.map(lambda x, idx: {
+                'id': idx,
+                'question': x['problem'],
+                'golden_answers': [x['answer']]
+            }, with_indices=True, remove_columns=dataset.column_names)
+        elif args.data_name == 'multi-hop-rag':
+            print("You are evaluating on the Multi-hop RAG dataset. Please ensure that you deploy the retriever model with the multi-hop RAG corpus.")
+            dataset = datasets.load_dataset('yixuantt/MultiHopRAG', split='train')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+            dataset = dataset.map(lambda x, idx: {
+                'id': idx,
+                'question': x['query'],
+                'golden_answers': [x['answer']]
+            }, with_indices=True, remove_columns=dataset.column_names)
+        elif args.data_name == 'bamboogle':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'bamboogle', split='test')
+        elif args.data_name == 'frames':
+            dataset = datasets.load_dataset('google/frames-benchmark', split='test')
+            dataset = dataset.map(lambda x, idx: {
+                'id': idx,
+                'question': x['Prompt'],
+                'golden_answers': [x['Answer']]
+            }, with_indices=True, remove_columns=dataset.column_names)
+        elif args.data_name == 'solutionbench':
+            print("You are evaluating on the SolutionBench dataset. Please ensure that you deploy the retriever model with the SolutionBench corpus.")
+            dataset = datasets.load_dataset('lzq2021/SolutionBench', 'datas')
+            # Concatenate all splits into a single dataset
+            splits = dataset.keys()
+            dataset = datasets.concatenate_datasets([dataset[split] for split in splits])
+            dataset = dataset.map(lambda x, idx: {
+                'id': idx,
+                'question': f"Request: {x['title']}\nDetails: {x['requirement']}",
+                'golden_answers': [x['solution']]
+            }, with_indices=True, remove_columns=dataset.column_names)
+        elif args.data_name == 'nq':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'nq', split='test')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'triviaqa':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'triviaqa', split='test')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'popqa':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'popqa', split='test')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'mmlu':
+            print("You are evaluating on the MMLU dataset. Please select the appropriate metric for evaluation.")
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'mmlu', split='test')
+            # Randomly select 1000 samples from the dataset for testing
+            dataset = dataset.shuffle(seed=42).select(range(1000))
+        else:
+            raise ValueError(f"Unsupported dataset name: {args.data_name}")
+            
         # breakpoint()
         dataset = dataset.map(lambda x: generate_answer(
             question=x['question'],
@@ -126,7 +193,7 @@ if __name__ == "__main__":
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
             config=mcts_args
-            ), num_proc=256)
+            ), num_proc=512)
         dataset.save_to_disk(f"{args.results_dir}")
     
     clear_agent_cache(generator, extractor, evaluator)

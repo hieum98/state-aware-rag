@@ -35,8 +35,9 @@ def generate_answer(
         question_id=question_id,
         golden_answer=golden_answer,
         # MCTS parameters
-        max_depth=config.max_depth if config else 15,
-        num_rollouts=config.num_rollouts if config else 100,
+        max_depth=config.max_depth if config else 5,
+        num_rollouts=config.num_rollouts if config else 10,
+        top_k=config.top_k if config else 5,
         use_golden_answer=config.use_golden_answer if config else False,
         save_tree=config.save_tree if config else False,
         save_dir=config.save_dir if config else "mcts_data"

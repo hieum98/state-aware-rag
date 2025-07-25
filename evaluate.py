@@ -100,7 +100,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load the dataset
-    dataset = datasets.load_from_disk(args.dataset_path)
+    if args.dataset_path.endswith('.json'):
+        dataset = datasets.load_dataset('json', data_files=args.dataset_path, split='train')
+    else:
+        dataset = datasets.load_from_disk(args.dataset_path)
 
     llm_setting = {
             'model_name': f'openai/{args.llm_judge_model_name}', 

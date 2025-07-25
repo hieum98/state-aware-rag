@@ -23,6 +23,10 @@ class LLMAgentArguments:
         default=64,
         metadata={"help": "Number of concurrent requests."}
     )
+    aws_profile_name: str = field(
+        default="hieu",
+        metadata={"help": "AWS profile name for Bedrock models."}
+    )
 
 @dataclass
 class GenerationArguments:
@@ -87,6 +91,10 @@ class MCTSArguments:
     num_rollouts: int = field(
         default=100,
         metadata={"help": "Number of rollouts for MCTS."}
+    )
+    top_k: int = field(
+        default=5,
+        metadata={"help": "Number of top-k results to retrieve from the retriever."}
     )
     use_golden_answer: bool = field(
         default=False,

@@ -111,6 +111,7 @@ def search(
         use_golden_answer: bool = False,
         save_tree: bool = False,
         save_dir: str = "mcts_trees",
+        top_k: int = 5,
         verbose: bool = False,
 ):  
     # Initialize the MCTS searcher with the given exploration weight
@@ -131,6 +132,7 @@ def search(
         golden_answer=golden_answer if use_golden_answer else None,
         user_question=user_question,
         question_id=question_id,
+        top_k=top_k,  # Set the top_k for the retriever
         verbose=False,
     )
     for i in range(num_rollouts):

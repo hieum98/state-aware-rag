@@ -60,6 +60,7 @@ class ReasoningNode(Node, NodeMixin):
             golden_answer: Optional[Union[str, List[str]]] = None,
             user_question: Optional[str] = None,
             question_id: Optional[str] = None,
+            top_k: int = 5,
             verbose: bool = False,  
             **kwargs
     ):  
@@ -74,6 +75,7 @@ class ReasoningNode(Node, NodeMixin):
             "evaluator": evaluator,  # The evaluator component for the node
             "extractor": extractor,  # The extractor component for the node
             "retriever": retriever,  # The retriever component for the node
+            "top_k": top_k,  # The number of top-k results to retrieve from the retriever
         }
         self.verbose = verbose  # Whether to print verbose output
         self.parent = parent # Parent node in the MCTS tree, if none, this is the root node
@@ -86,6 +88,7 @@ class ReasoningNode(Node, NodeMixin):
         self.evaluator = evaluator
         self.extractor = extractor
         self.retriever = retriever
+        self.top_k = top_k  if top_k is not None else 5
         # Node content
         self.state = {
             "user_question": None,  # The main user question for USER_QUESTION nodes
@@ -229,7 +232,7 @@ class ReasoningNode(Node, NodeMixin):
         queries_for_retriever = [q.strip() for q in queries_for_retriever if q.strip()]  # Remove empty queries
         queries_for_retriever.append(question)  # Add the sub question to the queries for retriever to prevent the case where the generated query is wrong or empty
         queries_for_retriever = list(set(queries_for_retriever))  # Remove duplicates
-        retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=10)['retrieved_docs']
+        retrieved_docs = self.retriever.search(query=queries_for_retriever, top_k=self.top_k)['retrieved_docs']
         if isinstance(retrieved_docs, list) and isinstance(retrieved_docs[0], list):
             retrieved_docs = sum(retrieved_docs, [])  # Flatten the list of lists
         retrieved_docs = [item['contents'] for item in retrieved_docs if 'contents' in item]  # Extract the content from the retrieved documents

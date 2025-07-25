@@ -57,7 +57,8 @@ if __name__ == "__main__":
         if instruction is None:
             instruction = default_instruction
         if not query:
-            return jsonify({"error": "Query is required"}), 400
+            print("No query provided. Returning empty results.")
+            return jsonify({"retrieved_docs": [], "scores": []} if return_score else {"retrieved_docs": []})
         if isinstance(query, str):
             query = [query]
 
@@ -92,7 +93,11 @@ if __name__ == "__main__":
                 'scores': scores if return_score else None
             }
         except:
-            return jsonify({"error": "Failed to retrieve"}), 500
+            print("Error during retrieval. Check your query and index.")
+            print("Query:", query)
+            print("Index path:", index_path)
+            print("Corpus path:", corpus_path)
+            retrieved_docs = {"retrieved_docs": [], "scores": []} if return_score else {"retrieved_docs": []}
 
         # retrieved_docs = retriever.search(query, top_k=top_k, return_score=return_score, instruction=instruction)
         # if reranker:

@@ -565,6 +565,10 @@ class LLMJudge(BaseMetric):
             assert len(responses) == len(batch_questions), "Length of responses must match length of questions."
             assert len(responses_without_golden) == len(batch_questions), "Length of responses without golden answers must match length of questions."
             for s1, s2 in zip(responses, responses_without_golden):
+                if s1 is None:
+                    s1 = 0
+                if s2 is None:
+                    s2 = 0
                 score_with_golden = float(s1)/10
                 score_without_golden = float(s2)/10
                 judge_list.append({

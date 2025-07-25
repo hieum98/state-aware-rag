@@ -66,7 +66,13 @@ class ModelClient:
         while True:
             if len(valid_choices) >= n:
                 break
-            response = self.completion(messages=messages, **model_kwargs)
+            try:
+                response = self.completion(messages=messages, **model_kwargs)
+            except Exception as e:
+                print(f"Error during completion: {e}. Retrying...")
+                response = None  # Reset response to None to trigger retry
+                # Wait for a short duration before retrying
+                time.sleep(5)
             # If the response is None or any choice is None or empty, retry
             if response is None:
                 continue

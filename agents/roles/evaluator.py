@@ -421,6 +421,16 @@ class Evaluator(LLMAgent):
         if self.verbose:
             print("Final Answer:", final_answer)
             print("Final Reasoning Path:", final_reasoning)
+        if not final_answer or not final_reasoning:
+            raise ValueError("The final answer or reasoning path is empty or not generated. Please check the input or the model response.")
+        if final_answer in ["", "No valid answer generated."]:
+            raise ValueError("The final answer is empty or not generated. Please check the input or the model response.")
+        if final_reasoning in ["", "No valid reasoning generated."]:
+            raise ValueError("The final reasoning path is empty or not generated. Please check the input or the model response.")
+        if final_answer.strip() == "":
+            raise ValueError("The final answer is empty after stripping whitespace. Please check the input or the model response.")
+        if final_reasoning.strip() == "":
+            raise ValueError("The final reasoning path is empty after stripping whitespace. Please check the input or the model response.")
         return final_answer, final_reasoning
     
 

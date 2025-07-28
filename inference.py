@@ -10,6 +10,7 @@ from agents.roles.extractor import Extractor
 from agents.roles.generator import Generator
 from agents.retriever_agents import RetrieverAgent
 from planners.MCTS.utils import search, clear_agent_cache
+from preprocess.utils import normalize_text
 from args import MCTSArguments, GenerationArguments, RetrieverArguments, LLMAgentArguments
 
 
@@ -183,6 +184,12 @@ if __name__ == "__main__":
             dataset = dataset.shuffle(seed=42).select(range(1000))
         else:
             raise ValueError(f"Unsupported dataset name: {args.data_name}")
+
+        # Normlize the question and golden answer in the dataset
+        dataset = dataset.map(lambda x: {
+            'question': normalize_text(x['question']),
+            'golden_answers': [normalize_text(ans) for ans in x['golden_answers']] if isinstance(x['golden_answers'], list) else [normalize_text(x['golden_answers'])]
+        })
             
         # breakpoint()
         dataset = dataset.map(lambda x: generate_answer(
@@ -194,7 +201,7 @@ if __name__ == "__main__":
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
             config=mcts_args
-            ), num_proc=512)
+            ), num_proc=64)
         dataset.save_to_disk(f"{args.results_dir}")
     
     clear_agent_cache(generator, extractor, evaluator)

@@ -8,6 +8,7 @@ import tqdm
 from colorama import Fore, Style
 from anytree import RenderTree
 
+from preprocess.utils import normalize_text
 from planners.MCTS.backbone import MCTS
 from planners.MCTS.reasoning_node import *
 
@@ -117,6 +118,17 @@ def search(
     # Initialize the MCTS searcher with the given exploration weight
     mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=False)
 
+    # Normalize the user question and golden answer if provided
+    if user_question is not None:
+        user_question = normalize_text(user_question)
+    if golden_answer is not None:
+        if isinstance(golden_answer, str):
+            golden_answer = [normalize_text(golden_answer)]
+        elif isinstance(golden_answer, list):
+            golden_answer = [normalize_text(ans) for ans in golden_answer]
+        else:
+            raise ValueError("golden_answer must be a string or a list of strings.")
+
     # Start the search from the root node
     root_node = ReasoningNode(
         parent=None,
@@ -149,11 +161,13 @@ def search(
     nodes = []
     solutions = []
     answers = []
+    full_answers = []
     reasoning_paths = []
     for _, _, node in RenderTree(root_node):
         nodes.append(node)
         if node.node_type is NodeType.FINAL_ANSWER:
             answers.append(node.state['node_content'])
+            full_answers.append(node.state['detailed_answer'])
             solutions.append(node.get_node())
             reasoning_path = node.get_path()
             reasoning_path, _ = node.get_reasoning_trace(path=reasoning_path)
@@ -166,8 +180,33 @@ def search(
     if len(answers) == 0:
         print("No valid solution nodes found in the reasoning tree.")
         final_answer = None
-    # final_answer = evaluator.majority_vote(question=user_question, answers=answers)
-    final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=reasoning_paths)
+        final_reasoning = None
+    try:
+        voted_answer, _final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+    except Exception as e:
+        voted_answer = evaluator.majority_vote(question=user_question, answers=answers)
+    if isinstance(voted_answer, str) and voted_answer not in ['No valid answer generated.'] and  voted_answer.strip() != "":
+        try:
+            questions = [user_question] * len(reasoning_paths)
+            voted_answers = [voted_answer] * len(reasoning_paths)
+            response = evaluator.evaluate_final_answer(question=questions, correct_answer=voted_answers, predicted_answer=reasoning_paths)
+            assert len(response) == len(reasoning_paths), "Response length does not match reasoning paths length."
+            voted_reasonings = [rea for res, rea in zip(response, reasoning_paths) if res['decision']]
+            final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=voted_reasonings)
+        except Exception as e:
+            try:
+                final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+            except Exception as e:
+                print(f"Error synthesizing final answer: {e}")
+                final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+                final_reasoning = None
+    else:
+        try:
+            final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+        except Exception as e:
+            print(f"Error synthesizing final answer: {e}")
+            final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+            final_reasoning = None
     
     if save_tree:
         # check if the save directory does not exist, create it
@@ -198,7 +237,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://ip-10-4-226-205:30000/v1', 
+        'url': 'http://ip-10-4-244-23:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -280,7 +319,7 @@ if __name__ == "__main__":
     )
 
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-226-205:5000/search",
+        "url": "http://ip-10-4-244-23:5000/search",
         "retrieval_topk": 64,
         "query_instruction": "query: ",
     }
@@ -296,10 +335,10 @@ if __name__ == "__main__":
         # Question components
         user_question=question,
         question_id="example_question_1",
-        max_depth=7,
+        max_depth=6,
         golden_answer="",
         # MCTS parameters
-        num_rollouts=10,
+        num_rollouts=2,
         use_golden_answer=False,
         save_tree=True,
         save_dir="mcts_data",

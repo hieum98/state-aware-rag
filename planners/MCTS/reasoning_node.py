@@ -175,16 +175,22 @@ class ReasoningNode(Node, NodeMixin):
         reasoning_trace = []
         reasoning_scores = []
         for i, node in enumerate(path):
-            if node.node_type in [NodeType.SUB_QA_NODE, NodeType.SELF_CORRECTED_NODE, NodeType.SYNTHESIS_NODE]:
+            if node.node_type in [NodeType.SUB_QA_NODE, NodeType.SYNTHESIS_NODE]:
                 reasoning_trace.append(node.state['node_content'])
                 reasoning_scores.append(node.state['confidence'])
+            elif node.node_type == NodeType.SELF_CORRECTED_NODE:
+                # Replace the last step in the reasoning trace with the self-corrected answer
+                step_content = node.state['node_content']
+                step_score = node.state['confidence']
+                reasoning_trace[-1] = step_content 
+                reasoning_scores[-1] = step_score
         if len(reasoning_trace) == 0:
             return None, []
         trace = ""
         for i, step in enumerate(reasoning_trace):
             trace += f"Step {i+1}: {step}\n"
         if path[-1].node_type == NodeType.FINAL_ANSWER:
-            trace += f"{path[-1].state['detailed_answer']}.\nFinal answer: {path[-1].state['node_content']}."
+            trace += f"Final answer: {path[-1].state['detailed_answer']}"
             reasoning_scores.append(path[-1].state['confidence'])
         return trace, reasoning_scores
     
@@ -205,7 +211,9 @@ class ReasoningNode(Node, NodeMixin):
                 self.memory = [item for item in self.memory if item]  # Remove empty strings
                 self.memory = list(set(self.memory))
                 self.memory.sort()  # Sort to ensure consistent order
-            memory_knowledge = "\n".join(self.memory)
+                memory = copy.deepcopy(self.memory)
+                memory = [f"Memory {i+1}:\n{item}" for i, item in enumerate(memory)]
+            memory_knowledge = "\n".join(memory)
             additional_info['memory_knowledge'] = copy.deepcopy(self.memory)
             additional_info['question'] = sub_question
             extracted_memory = self.extractor.extract(question=sub_question, document=memory_knowledge, additional_info=additional_info)[0]
@@ -326,12 +334,12 @@ class ReasoningNode(Node, NodeMixin):
         for item in response:
             answer = item['answer']
             if answer is None or answer.strip() == "":
-                answer = f"{item['detailed_answer']}." 
+                answer = f"{item['detailed_answer']}" 
             detailed_answer = ""
             if item['detailed_answer'] is not None and item['detailed_answer'].strip() != "":
                 detailed_answer = item['detailed_answer']
             if item['reasoning'] is not None and item['reasoning'].strip() != "":
-                detailed_answer += f". {item['reasoning']}"
+                detailed_answer += f"\n{item['reasoning']}"
             if self.verbose:
                 print(f"Generated final answer: {answer}")
             if answer in all_answers:
@@ -384,7 +392,7 @@ class ReasoningNode(Node, NodeMixin):
             nodes = []
             all_answers = []
             for item in response:
-                answer = f"{item['detailed_answer']}.\nReasoning: {item['reasoning']}"
+                answer = f"{item['detailed_answer']}\nReasoning: {item['reasoning']}"
                 if answer in all_answers:
                     continue  # Skip duplicate answers
                 all_answers.append(answer)
@@ -447,13 +455,13 @@ class ReasoningNode(Node, NodeMixin):
                     # Get the highest confidence answer
                     answer = max(response, key=lambda x: x['confidence'])
                     if self.verbose:
-                        print(f"Generated answer for sub-question {sub_question}: {answer['detailed_answer']}.\nReasoning: {answer['reasoning']}")
+                        print(f"Generated answer for sub-question {sub_question}: {answer['detailed_answer']}\nReasoning: {answer['reasoning']}")
                     node = ReasoningNode(
                         parent=self,
                         node_type=NodeType.SUB_QA_NODE,
                         depth=self.tree_depth + 1,
                         question=sub_question,
-                        answer=f"{answer['detailed_answer']}.\nReasoning: {answer['reasoning']}",
+                        answer=f"{answer['detailed_answer']}\nReasoning: {answer['reasoning']}",
                         confidence=answer['confidence'],
                         **self.node_config
                     )
@@ -501,7 +509,7 @@ class ReasoningNode(Node, NodeMixin):
         assert self.node_type == NodeType.SUB_QA_NODE, "SELF_CORRECTED_NODE can only be generated from SUB_QA_NODE nodes."
         sub_question = self.state['sub_question']
         sub_answer = self.state['sub_answer']
-        current_step_objective = f"Verify the answer for the question: {sub_question}.\nAnswer: {sub_answer}"
+        current_step_objective = f"Verify the answer for the question: {sub_question}\nAnswer: {sub_answer}"
         user_question = self.node_config['user_question']
 
         memory_information = self.reflect(sub_question=current_step_objective)  # Reflect on the memory
@@ -521,8 +529,8 @@ class ReasoningNode(Node, NodeMixin):
         all_reanswer = []
         for item in response:
             if self.verbose:
-                print(f"Generated self-corrected answer: {item['reanswer']}.\nReasoning: {item['reasoning']}")
-            reanswer=f"{item['reanswer']}.\nReasoning: {item['reasoning']}"
+                print(f"Generated self-corrected answer: {item['reanswer']}\nReasoning: {item['reasoning']}")
+            reanswer=f"{item['reanswer']}\nReasoning: {item['reasoning']}"
             if reanswer in all_reanswer:
                 continue
             all_reanswer.append(reanswer)

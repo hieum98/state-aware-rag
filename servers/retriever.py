@@ -35,8 +35,8 @@ if __name__ == "__main__":
     else:
         corpus = datasets.load_from_disk(corpus_path)
     index = faiss.read_index(index_path)
-    print(f"Loaded corpus with {len(corpus)} documents.")
-    print(f"Loaded index with {index.ntotal} vectors.")
+    print(f"Loaded corpus with {len(corpus)} documents from {corpus_path}.")
+    print(f"Loaded index with {index.ntotal} vectors from {index_path}.")
 
     encoder_model_base_url = config.encoder_model_base_url
     encoder_model_api_key = config.encoder_model_api_key

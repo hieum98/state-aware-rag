@@ -5,3 +5,5 @@ mcts_data
 mcts_cache
 configs
 output
+extractor_data
+results

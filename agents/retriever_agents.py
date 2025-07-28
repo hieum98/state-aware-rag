@@ -94,6 +94,7 @@ class FlashRAGRetrieverAgent:
             index_path = self.build_index(config=self.config, save_dir="indexes",)['index_save_path']
         self.config["index_path"] = index_path
         self.retriever = DenseRetriever(self.config)
+        print(f"Initialized FlashRAGRetrieverAgent with config: {self.config}")
     
     @staticmethod
     def build_index(
@@ -172,6 +173,7 @@ class APIRetrieverAgent:
         self.headers = {'Content-Type': 'application/json'}
         self.retrieval_topk = kwargs.get('retrieval_topk', 5)
         self.query_instruction = kwargs.get('query_instruction', None)
+        print(f"Initialized APIRetrieverAgent with URL: {self.url}")
 
     def search(
             self, 
@@ -246,30 +248,15 @@ class RetrieverAgent:
 
 
 if __name__ == "__main__":
-    # Run on server side
-    # python -m agents.servers.retriever --config path/to/config.yaml
-    # Example usage
-    # retriever_agent = FlashRAGRetrieverAgent(
-    #     retriever_method="e5",
-    #     retrieval_model_path="intfloat/e5-base-v2",
-    #     corpus_path="data/wiki18_100w.jsonl",
-    #     index_path="indexes/data00/jiajie_jin/flashrag_indexes/wiki_dpr_100w/e5_flat_inner.index",  # Will build index if None
-    #     retrieval_topk=5,
-    #     retrieval_batch_size=32,
-    #     retrieval_use_fp16=False,
-    #     retrieval_query_max_length=2048,
-    #     retrieval_pooling_method='mean',
-    #     use_sentence_transformer=True,
-    # )
-
     retriever_online_kwargs = {
-        "url": "http://10.4.225.181:5000/search",
+        "url": "http://ip-10-4-225-181:5000/search",
         "retrieval_topk": 64,
         "query_instruction": None,
     }
     retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    query = "Where is Ning Hao born?"
+    query = "What are the birth dates of Miroslav Štolfa?"
+    # query = "Where was Ning Hao born?"
     # query = "When was the Declaration of Independence signed?"
     results = retriever_agent.search(query, top_k=5, instruction=None)
     breakpoint()

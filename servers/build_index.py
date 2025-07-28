@@ -22,13 +22,8 @@ if __name__ == "__main__":
 
     if dataset_name == 'wiki23':
         data_path = "data/wiki23"
-        # check if the dataset is already processed
-        if not os.path.exists(data_path):
-            data = datasets.load_dataset("wikimedia/wikipedia", "20231101.en", split="train")
-            data = data.map(lambda x: {
-                'id': x['id'],
-                'contents': simple_preprocess(f"{x['title']}\n{x['text']}")
-            }, remove_columns=['title', 'text'], num_proc=32)
+        # check if the dataset is already processed. Make sure to run the preprocessing script first
+        data = datasets.load_from_disk("data/wiki23-chunked")
     elif dataset_name == 'wiki18':
         data_path = "data/wiki18"
         if not os.path.exists(data_path):
@@ -75,7 +70,7 @@ if __name__ == "__main__":
             get_embeddings,
             batched=True,
             batch_size=512, 
-            num_proc=2,
+            num_proc=8,
             cache_file_name=None,   
         )
         # Filter out any entries that failed to generate embeddings

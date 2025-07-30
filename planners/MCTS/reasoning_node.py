@@ -147,6 +147,7 @@ class ReasoningNode(Node, NodeMixin):
             memory = [memory]
         if isinstance(memory, list):
             memory = [item for item in memory if item]  # Remove empty strings
+            memory = list(set(memory))  # Remove duplicates
             memory.sort()
         self.memory = memory
     
@@ -211,10 +212,9 @@ class ReasoningNode(Node, NodeMixin):
                 self.memory = [item for item in self.memory if item]  # Remove empty strings
                 self.memory = list(set(self.memory))
                 self.memory.sort()  # Sort to ensure consistent order
-                memory = copy.deepcopy(self.memory)
-                memory = [f"Memory {i+1}:\n{item}" for i, item in enumerate(memory)]
-            memory_knowledge = "\n".join(memory)
-            additional_info['memory_knowledge'] = copy.deepcopy(self.memory)
+            memory = copy.deepcopy(self.memory)
+            memory_knowledge = "\n".join(memory) if isinstance(memory, list) else memory
+            additional_info['memory_knowledge'] = copy.deepcopy(memory)
             additional_info['question'] = sub_question
             extracted_memory = self.extractor.extract(question=sub_question, document=memory_knowledge, additional_info=additional_info)[0]
             if extracted_memory['decision'] == 'relevant':
@@ -282,7 +282,6 @@ class ReasoningNode(Node, NodeMixin):
         user_question = self.node_config['user_question']
         raw_memory = ""
         if self.memory:
-            current_memory = [f"Memory {i+1}:\n{item}" for i, item in enumerate(self.memory)] if self.memory else None
             current_memory = "\n".join(current_memory) if current_memory else None
             raw_memory += f"Current memory:\n{current_memory}\n----------\n"
         if intermediate_conclusions:

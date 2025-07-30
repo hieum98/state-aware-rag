@@ -182,6 +182,9 @@ if __name__ == "__main__":
             dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'mmlu', split='test')
             # Randomly select 1000 samples from the dataset for testing
             dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == 'training_data_small':
+            dataset = datasets.load_from_disk('data/small_data_with_support')
+            dataset = dataset.rename_column("answer", "golden_answers")
         else:
             raise ValueError(f"Unsupported dataset name: {args.data_name}")
 
@@ -190,8 +193,6 @@ if __name__ == "__main__":
             'question': normalize_text(x['question']),
             'golden_answers': [normalize_text(ans) for ans in x['golden_answers']] if isinstance(x['golden_answers'], list) else [normalize_text(x['golden_answers'])]
         })
-            
-        # breakpoint()
         dataset = dataset.map(lambda x: generate_answer(
             question=x['question'],
             generator=generator,
@@ -201,10 +202,10 @@ if __name__ == "__main__":
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
             config=mcts_args
-            ), num_proc=64)
+            ), num_proc=128)
         dataset.save_to_disk(f"{args.results_dir}")
     
-    clear_agent_cache(generator, extractor, evaluator)
+    # clear_agent_cache(generator, extractor, evaluator)
     breakpoint()
 
 

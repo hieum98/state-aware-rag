@@ -202,7 +202,7 @@ if __name__ == "__main__":
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
             config=mcts_args
-            ), num_proc=128)
+            ), num_proc=64)
         dataset.save_to_disk(f"{args.results_dir}")
     
     # clear_agent_cache(generator, extractor, evaluator)

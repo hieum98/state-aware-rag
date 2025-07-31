@@ -282,6 +282,7 @@ class ReasoningNode(Node, NodeMixin):
         user_question = self.node_config['user_question']
         raw_memory = ""
         if self.memory:
+            current_memory = copy.deepcopy(self.memory)
             current_memory = "\n".join(current_memory) if current_memory else None
             raw_memory += f"Current memory:\n{current_memory}\n----------\n"
         if intermediate_conclusions:
@@ -704,6 +705,7 @@ class ReasoningNode(Node, NodeMixin):
         user_question = self.node_config['user_question']
         golden_answer = self.node_config['golden_answer']
         answer = self.state['node_content'] 
+        detailed_answer = self.state['detailed_answer'] if self.state.get('detailed_answer') else answer
         answer_confidence = self.state['confidence']
         path = self.get_path()
         _, reasoning_scores = self.get_reasoning_trace(path)
@@ -712,10 +714,17 @@ class ReasoningNode(Node, NodeMixin):
         answer_side_reward = None
         if golden_answer:
             em_score = self.evaluator.evaluate_with_em(golden_answer, answer)[0]
-            judge_score = self.evaluator.evaluate_final_answer(question=user_question, correct_answer=golden_answer, predicted_answer=answer)[0]
-            judge_score = judge_score['decision'] * judge_score['confidence'] 
-
+            judge_score = self.evaluator.judge_answer(user_question=user_question, system_answer=detailed_answer, correct_answer=golden_answer)[0]
+            if judge_score is None:
+                judge_score = 0.0
+            judge_score = float(judge_score) / 10
             answer_side_reward = 0.5*(em_score + judge_score) * answer_confidence
+        else:
+            judge_score = self.evaluator.judge_answer(user_question=user_question, system_answer=detailed_answer, correct_answer=None)[0]
+            if judge_score is None:
+                judge_score = 0.0
+            judge_score = float(judge_score) / 10
+            answer_side_reward = judge_score * answer_confidence
         
         # Reasoning confidence reward
         reasoning_side_reward = sum(reasoning_scores) / len(reasoning_scores) if reasoning_scores else 0.0

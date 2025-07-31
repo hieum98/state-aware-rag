@@ -180,6 +180,7 @@ class LiteLLMClient(ModelClient):
         assert isinstance(messages, list), "Messages must be a list of dictionaries with 'role' and 'content' keys."
         response = completion(
             messages=messages,
+            timeout=1200, # Increase timeout for large models
             **kwargs
         )
         return response
@@ -228,7 +229,11 @@ class OpenAIClient(ModelClient):
     
     def completion(self, messages: List[Dict[str, str]], **kwargs):
         assert isinstance(messages, list), "Messages must be a list of dictionaries with 'role' and 'content' keys."
-        response = self.client.chat.completions.create(messages=messages, **kwargs) # type: ignore
+        response = self.client.chat.completions.create(
+            messages=messages, 
+            timeout=1200,  # Increase timeout for large models
+            **kwargs
+            ) # type: ignore
         return response
 
 

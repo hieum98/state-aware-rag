@@ -8,7 +8,7 @@ import tqdm
 from colorama import Fore, Style
 from anytree import RenderTree
 
-from preprocess.utils import normalize_text
+from preprocess.utils import simple_preprocess
 from planners.MCTS.backbone import MCTS
 from planners.MCTS.reasoning_node import *
 
@@ -120,12 +120,12 @@ def search(
 
     # Normalize the user question and golden answer if provided
     if user_question is not None:
-        user_question = normalize_text(user_question)
+        user_question = simple_preprocess(user_question)
     if golden_answer is not None:
         if isinstance(golden_answer, str):
-            golden_answer = [normalize_text(golden_answer)]
+            golden_answer = [simple_preprocess(golden_answer)]
         elif isinstance(golden_answer, list):
-            golden_answer = [normalize_text(ans) for ans in golden_answer]
+            golden_answer = [simple_preprocess(ans) for ans in golden_answer]
         else:
             raise ValueError("golden_answer must be a string or a list of strings.")
 
@@ -148,7 +148,7 @@ def search(
         verbose=False,
     )
     for i in range(num_rollouts):
-        simulated_node = mcts_searcher.do_rollout(root_node)
+        simulated_node = mcts_searcher.do_rollout(root_node, rollout_id=i)
         if verbose:
             print_tree_from_root(root_node)
         best_solution, scores, solution_nodes = find_best_solution(root_node, verbose=verbose)
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://ip-10-4-244-23:30000/v1', 
+        'url': 'http://ip-10-4-241-174:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -245,6 +245,7 @@ if __name__ == "__main__":
     api_model_kwargs = {
         # 'model_name': 'bedrock/us.anthropic.claude-opus-4-20250514-v1:0',
         'model_name': 'bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        # 'model_name': 'bedrock/us.deepseek.r1-v1:0',  # Use DeepSeek R1 model
         'url': None,  # Use default URL for the model
         'api_key': None,  # Set your API key if required
         'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
@@ -311,7 +312,8 @@ if __name__ == "__main__":
         'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
     }
     extractor = Extractor(
-        client_kwargs=api_model_kwargs, 
+        # client_kwargs=online_model_kwargs, 
+        client_kwargs=api_model_kwargs,
         generate_kwargs=extract_kwargs, 
         # verbose=True,
         use_cache=True,
@@ -319,9 +321,8 @@ if __name__ == "__main__":
     )
 
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-244-23:5000/search",
+        "url": "http://ip-10-4-225-181:5000/search",
         "retrieval_topk": 64,
-        "query_instruction": "query: ",
     }
     retriever = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
@@ -336,10 +337,10 @@ if __name__ == "__main__":
         user_question=question,
         question_id="example_question_1",
         max_depth=6,
-        golden_answer="",
+        golden_answer="Taiyuan",
         # MCTS parameters
-        num_rollouts=2,
-        use_golden_answer=False,
+        num_rollouts=10,
+        use_golden_answer=True,
         save_tree=True,
         save_dir="mcts_data",
         verbose=True,

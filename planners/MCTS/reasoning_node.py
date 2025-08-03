@@ -137,6 +137,14 @@ class ReasoningNode(Node, NodeMixin):
         else:
             raise ValueError(f"Invalid node type: {node_type}. Must be one of {list(NodeType)}.")
     
+    def set_rollout_id(self, rollout_id: Optional[int] = None):
+        """
+        Set the rollout ID for the node.
+        Args:
+            rollout_id (str): The rollout ID to set for the node.
+        """
+        self.rollout_id = rollout_id
+    
     def set_memory(self, memory: List[str]):
         """
         Set the memory for the node.
@@ -216,9 +224,11 @@ class ReasoningNode(Node, NodeMixin):
             memory_knowledge = "\n".join(memory) if isinstance(memory, list) else memory
             additional_info['memory_knowledge'] = copy.deepcopy(memory)
             additional_info['question'] = sub_question
-            extracted_memory = self.extractor.extract(question=sub_question, document=memory_knowledge, additional_info=additional_info)[0]
+            extracted_memory = self.extractor.extract(question=sub_question, document=memory_knowledge, additional_info=additional_info, n=3)[0]
             if extracted_memory['decision'] == 'relevant':
                 memory_information = extracted_memory['extracted_information']
+                memory_information = [item for item in memory_information if item]  # Remove empty strings
+                memory_information = list(set(memory_information))  # Remove duplicates
         if self.verbose:
             print(f"Reflected memory information: {memory_information}")
         return memory_information
@@ -230,6 +240,7 @@ class ReasoningNode(Node, NodeMixin):
             'user_question': copy.deepcopy(self.node_config['user_question']),
             'question_id': copy.deepcopy(self.node_config['question_id']),
             'depth': copy.deepcopy(self.tree_depth),
+            'question': question,  # The sub-question to explore
         }
         response = self.generator.generate_queries_for_retriever(question=question)
         queries_for_retriever = []
@@ -248,17 +259,30 @@ class ReasoningNode(Node, NodeMixin):
         retrieved_docs = [doc.strip() for doc in retrieved_docs if doc.strip()]  # Remove empty documents
         retrieved_docs.sort()  # Sort to ensure consistent order
 
-        retrieved_information = ""
-        for i, doc in enumerate(retrieved_docs):
-            retrieved_information += f"Retrieved information {i+1}:\n{doc}\n"
-        additional_info['retrieved_docs'] = retrieved_docs
-        additional_info['question'] = question
-        extracted_retrieval_information = self.extractor.extract(question=question, document=retrieved_information, additional_info=additional_info)[0]
+        # retrieved_information = ""
+        # for i, doc in enumerate(retrieved_docs):
+        #     retrieved_information += f"Retrieved information {i+1}:\n{doc}\n"
+        # additional_info['retrieved_docs'] = retrieved_docs
+        # additional_info['question'] = question
+        # extracted_retrieval_information = self.extractor.extract(question=question, document=retrieved_information, additional_info=additional_info)[0]
+        # external_information = []
+        # if extracted_retrieval_information['decision'] == 'relevant':
+        #     external_information = extracted_retrieval_information['extracted_information']
+        
+        all_additional_info = []
+        for doc in retrieved_docs:
+            additional_info_copy = copy.deepcopy(additional_info)
+            additional_info_copy['retrieved_doc'] = doc
+            all_additional_info.append(additional_info_copy)
+        responses = self.extractor.extract(question=[question] * len(retrieved_docs), document=retrieved_docs, additional_info=all_additional_info)
         external_information = []
-        if extracted_retrieval_information['decision'] == 'relevant':
-            external_information = extracted_retrieval_information['extracted_information']
+        for r in responses:
+            if r['decision'] == 'relevant':
+                external_information.extend(r['extracted_information'])
         if self.verbose:
             print(f"Explored external information: {external_information}")
+        external_information = [item for item in external_information if item]
+        external_information = list(set(external_information))  # Remove duplicates
         return external_information
     
     def update_memory(
@@ -283,21 +307,24 @@ class ReasoningNode(Node, NodeMixin):
         raw_memory = ""
         if self.memory:
             current_memory = copy.deepcopy(self.memory)
+            current_memory = [f"- {item}" for i, item in enumerate(current_memory)] if current_memory else None
             current_memory = "\n".join(current_memory) if current_memory else None
             raw_memory += f"Current memory:\n{current_memory}\n----------\n"
         if intermediate_conclusions:
-            intermediate_conclusions = [f"Conclusion {i+1}:\n{item}" for i, item in enumerate(intermediate_conclusions)] if intermediate_conclusions else None
+            intermediate_conclusions = [f"- {item}" for i, item in enumerate(intermediate_conclusions)] if intermediate_conclusions else None
             intermediate_conclusions = "\n".join(intermediate_conclusions) if intermediate_conclusions else None
             raw_memory += f"Intermediate conclusions:\n{intermediate_conclusions}\n----------\n"
         if step_explored_information:
-            step_explored_information = [f"Retrieved information {i+1}:\n{item}" for i, item in enumerate(step_explored_information)] if step_explored_information else None
+            step_explored_information = [f"- {item}" for i, item in enumerate(step_explored_information)] if step_explored_information else None
             step_explored_information = "\n".join(step_explored_information) if step_explored_information else None
             raw_memory += f"Information from external KB:\n{step_explored_information}\n----------\n"
         if raw_memory == "":
             return None
         additional_info['raw_memory'] = raw_memory
-        new_memory = self.extractor.extract(question=user_question, document=raw_memory, additional_info=additional_info)[0]
+        new_memory = self.extractor.extract(question=user_question, document=raw_memory, additional_info=additional_info, n=3)[0]
         new_memory = new_memory['extracted_information']
+        new_memory = [item for item in new_memory if item]  # Remove empty strings
+        new_memory = list(set(new_memory))  # Remove duplicates
         if self.verbose:
             print(f"New memory after update: {new_memory}")
         return new_memory
@@ -314,17 +341,17 @@ class ReasoningNode(Node, NodeMixin):
         user_question = self.node_config['user_question']
         path = self.get_path()
         reasoning_trace, _ = self.get_reasoning_trace(path)
-        memory_information = self.reflect(sub_question=user_question)  # Reflect on the memory
+        memory_information = copy.deepcopy(self.memory) if self.memory else None
         external_information = self.explore(question=user_question)  # Explore the external knowledge base
         important_information = ""
-        if memory_information:
-            memory_data = "\n".join(memory_information)
-            important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
         if external_information:
             external_data = "\n".join(external_information)
             important_information += f"\t**Information from external KB**\n{external_data}\n----------\n"
+        if memory_information:
+            memory_data = "\n".join(memory_information)
+            important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
         if reasoning_trace:
-            important_information += f"\t**Reasoning trace**\n{reasoning_trace}"
+            important_information += f"\t**Reasoning trace**\n{reasoning_trace}\n----------\n"
         if self.verbose:
             print(f"Important information for final answer generation:")
             print(important_information)
@@ -672,13 +699,14 @@ class ReasoningNode(Node, NodeMixin):
         assert len(children) > 0, f"No children generated for node type: {self.print_node()}"
         return children, new_memory
     
-    def find_children(self):
+    def find_children(self, rollout_id: Optional[int] = None):
         if self.children:
             return self.children
         children, new_memory = self.generate_children()
         self.children = children
         for child in self.children:
             child.set_memory(new_memory)
+            child.set_rollout_id(rollout_id)
         return self.children
 
     def is_valid_leaf(self) -> bool:
@@ -780,6 +808,7 @@ class ReasoningNode(Node, NodeMixin):
         node['golden_answer'] = self.node_config['golden_answer']
         node['node_type'] = self.node_type.value
         node['depth'] = self.tree_depth
+        node['rollout_id'] = self.rollout_id if hasattr(self, 'rollout_id') else None
         if self.parent is None:
             node['parent'] = None
         else:

@@ -70,6 +70,7 @@ class ModelClient:
                 response = self.completion(messages=messages, **model_kwargs)
             except Exception as e:
                 print(f"Error during completion: {e}. Retrying...")
+                print(f"Messages: {messages}")
                 response = None  # Reset response to None to trigger retry
                 # Wait for a short duration before retrying
                 time.sleep(5)

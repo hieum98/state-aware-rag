@@ -105,7 +105,7 @@ class MCTS:
             # if the node is fully explored, select the child with UCT
             node = self._uct_select(node)
 
-    def _expand(self, node: Node):
+    def _expand(self, node: Node, rollout_id=None):
         """
         Expand the given node by adding its children to the tree.
         Update the tree with the new children of unexplored nodes.
@@ -116,7 +116,7 @@ class MCTS:
             self.explored_nodes.add(node)  # Mark the node as explored
             return # Terminal node, no children to expand
         
-        self.children[node] = node.find_children() # Find the children of the node
+        self.children[node] = node.find_children(rollout_id) # Find the children of the node
         if self.verbose:
             print(f"Expanding node:")
             node.print_node()
@@ -127,7 +127,7 @@ class MCTS:
                 child.print_node()
                 print("*" * 10)
     
-    def _simulate(self, node: Node) -> List[Node]:
+    def _simulate(self, node: Node, rollout_id=None) -> List[Node]:
         """
         Simulate a random game from the given node to a terminal state.
         Return the reward of the terminal state.
@@ -140,7 +140,7 @@ class MCTS:
                 return path
             
             if current_node not in self.children.keys():
-                self.children[current_node] = current_node.find_children() # Expand the node if it has no children
+                self.children[current_node] = current_node.find_children(rollout_id) # Expand the node if it has no children
             
             current_node = random.choice(self.children[current_node]) # Choose a random child to simulate
             path.append(current_node) # Add the current node to the path
@@ -152,7 +152,7 @@ class MCTS:
             self.Q[node] += reward
             self.explored_nodes.add(node) # Mark the node as explored
     
-    def do_rollout(self, node: Node):
+    def do_rollout(self, node: Node, rollout_id=None):
         """
         Perform a rollout from the given node to a terminal state and update the tree's nodes reward and visit counts by using backpropagation.
         """
@@ -164,8 +164,8 @@ class MCTS:
                 n.print_node()
         leaf = path[-1] # The last node in the path is the leaf node
         
-        self._expand(leaf) # Expand the the tree with the children of the leaf node
-        simulated_path = self._simulate(leaf) # Simulate a random game from the leaf node to a terminal state
+        self._expand(leaf, rollout_id=rollout_id) # Expand the the tree with the children of the leaf node
+        simulated_path = self._simulate(leaf, rollout_id=rollout_id) # Simulate a random game from the leaf node to a terminal state
         if simulated_path:
             simulated_node = simulated_path[-1] # The last node in the simulated path is the terminal node
         else:

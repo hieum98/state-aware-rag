@@ -29,7 +29,11 @@ class EvaluateAnswerOutput(pydantic.BaseModel):
     )
 
 
-JUDGE_ANSWER_PROMPT = """You will be given a user_question and system_answer couple. Your task is to provide a 'total rating' scoring how well the system_answer answers the user concerns expressed in the user_question. Give your answer as a float on a scale of 0 to 10, where 0 means that the system_answer is not helpful at all, and 10 means that the answer completely and helpfully addresses the question. You will may or may not be given a 'correct_answer' to compare against, but you should always provide a rating based on the quality of the system_answer.
+JUDGE_ANSWER_PROMPT = """You will be given a user_question and system_answer couple. Your task is to provide a 'total rating' scoring how well the system_answer answers the user concerns expressed in the user_question. Give your answer as a float on a scale of 0 to 10, where 0 means that the system_answer is not helpful at all, and 10 means that the answer completely and helpfully addresses the question. You will may or may not be given a 'correct_answer' to compare against, when it is provided, you should use it to help inform your rating whether the system_answer is correct or not due to the fact that it is a good indicator of how well the system_answer addresses the user_question. However, please note that you should not only focus on the correctness of the system_answer, but also on how well, comprehensively, and helpfully the system_answer addresses the user_question such as whether it provides helpful information to the user, whether it is clear and concise, and whether it is relevant to the user_question. Please keep in mind that the user_question may be ambiguous, complex, or open-ended, and the system_answer may not be perfect but may still be helpful. Therefore, you should use your best judgment to evaluate the system_answer based on the following criteria:
+1.   Clarity: How clear and concise is the system_answer? 
+2.   Helpfulness: How helpful is the system_answer to the user? The system_answer may not be perfect, but it should still provide helpful information to the user. 
+3.   Correctness: How correct is the system_answer?Note that, if a correct_answer is provided and the system_answer is marked as correct, you always give a rating of 10, as it is a good indicator that the system_answer addresses the user_question well. 
+
 
 Here are some examples: {examples}
 Now, please evaluate the following question and answer:
@@ -77,17 +81,11 @@ An agent is attempting to answer a main question by breaking it down into a seri
 
 ### Task & Evaluation Rubric:
 First, provide a step-by-step analysis based on the four criteria below. Then, assign a score from poor to excellent for each criterion:
-1.   Relevance: 
-    *   How relevant was the "Information Selected for this Step" to the "Sub-Question"?
-    *   Does it directly address the sub-question, or is it tangential or noisy?
-2.   Sufficiency: 
-    *   Did the "Information Selected for this Step" provide enough detail to fully answer the "Sub-Question"?
-    *   Was the information comprehensive, or did it leave gaps that needed further explanation?
-3.   Logical Coherence: 
-    *   Does the "Generated Answer" follow logically from the "Full Reasoning Trace"?
-    *   Does it build upon or contradict previous conclusions in the trace?
+1.   Relevance:  How relevant was the "Information Selected for this Step" to the "Sub-Question"?
+2.   Sufficiency: How comprehensive was the information in addressing the sub-question?
+3.   Logical Coherence:  How does the "Generated Answer" follow logically from the "Full Reasoning Trace"?
 4.   Factuality: 
-    *   Is the "Generated Answer" factually correct according to the "Information Selected for this Step"?
+    *   How is the "Generated Answer" factually correct according to the "Information Selected for this Step"?
     *   Penalize any claims in the answer that are not supported by the selected information.
 """
 

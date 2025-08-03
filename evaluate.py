@@ -1,5 +1,7 @@
 from typing import List
 import datasets
+import os
+
 from utils.metrics import (
     ExactMatch, 
     Sub_ExactMatch, 
@@ -123,13 +125,14 @@ if __name__ == "__main__":
 
     # Print results
     pprint(results)
-    # Save results to a file
-    with open('evaluation_results.json', 'w') as f:
-        import json
-        json.dump(results, f, indent=4)
-    print("Evaluation results saved to 'evaluation_results.json'.")
-
     # Save the updated dataset
+    result_path = args.dataset_path + "_with_scores"
     updated_dataset.save_to_disk(args.dataset_path + "_with_scores")
     print(f"Updated dataset saved to '{args.dataset_path}_with_scores'.")
+    # Save results to a file
+    path = os.path.join(result_path, 'evaluation_results.json')
+    with open(path, 'w') as f:
+        import json
+        json.dump(results, f, indent=4)
+    print(f"Evaluation results saved to {path}.")
 

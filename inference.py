@@ -10,7 +10,7 @@ from agents.roles.extractor import Extractor
 from agents.roles.generator import Generator
 from agents.retriever_agents import RetrieverAgent
 from planners.MCTS.utils import search, clear_agent_cache
-from preprocess.utils import normalize_text
+from preprocess.utils import simple_preprocess
 from args import MCTSArguments, GenerationArguments, RetrieverArguments, LLMAgentArguments
 
 
@@ -185,13 +185,15 @@ if __name__ == "__main__":
         elif args.data_name == 'training_data_small':
             dataset = datasets.load_from_disk('data/small_data_with_support')
             dataset = dataset.rename_column("answer", "golden_answers")
+        elif args.data_name == 'training_data':
+            dataset = datasets.load_from_disk('data/train_data')
         else:
             raise ValueError(f"Unsupported dataset name: {args.data_name}")
 
         # Normlize the question and golden answer in the dataset
         dataset = dataset.map(lambda x: {
-            'question': normalize_text(x['question']),
-            'golden_answers': [normalize_text(ans) for ans in x['golden_answers']] if isinstance(x['golden_answers'], list) else [normalize_text(x['golden_answers'])]
+            'question': simple_preprocess(x['question']),
+            'golden_answers': [simple_preprocess(ans) for ans in x['golden_answers']] if isinstance(x['golden_answers'], list) else [simple_preprocess(x['golden_answers'])]
         })
         dataset = dataset.map(lambda x: generate_answer(
             question=x['question'],
@@ -202,7 +204,7 @@ if __name__ == "__main__":
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
             config=mcts_args
-            ), num_proc=64)
+            ), num_proc=256)
         dataset.save_to_disk(f"{args.results_dir}")
     
     # clear_agent_cache(generator, extractor, evaluator)

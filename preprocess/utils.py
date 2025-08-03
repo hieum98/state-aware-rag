@@ -1,3 +1,4 @@
+import json
 import re
 import unicodedata
 
@@ -62,5 +63,47 @@ def normalize_text(s):
 
     return simple_preprocess(white_space_fix(remove_articles(remove_punc(lower(s)))))
 
-    
+def process_extractor_data_from_cache(cache_path: str):
+    with open(cache_path, 'r') as f:
+        data = json.load(f)
+    all_data = []
+    for raw_data in data:
+        try:
+            user_question = raw_data['any_other_info']['user_question']
+            question = raw_data['any_other_info']['question'] if 'question' in raw_data['any_other_info'] else user_question
+            output = raw_data['output']
+            if output['decision'] == 'not_relevant':
+                # Fix for not_relevant outputs that must return empty information
+                output['information'] = []
+            item = {
+                'user_question': user_question,
+                'user_question_id': raw_data['any_other_info']['question_id'],
+                'depth': raw_data['any_other_info']['depth'],
+                'question': question,
+                'input': raw_data['input'],
+                'output': output,
+                'reasoning': raw_data['reasoning'],
+            }
+            if 'retrieved_docs' in raw_data['any_other_info']:
+                item_type = 'explore'
+                content = raw_data['any_other_info']['retrieved_docs']
+            elif 'memory_knowledge' in raw_data['any_other_info']:
+                item_type = 'reflect'
+                content = raw_data['any_other_info']['memory_knowledge']
+                if isinstance(content, str):
+                    content = [content]
+            elif 'raw_memory' in raw_data['any_other_info']:
+                item_type = 'synthesize'
+                content = raw_data['any_other_info']['raw_memory']
+                if isinstance(content, str):
+                    content = [content]
+            else:
+                raise ValueError(f"Unknown item type in file {cache_path}: {raw_data['any_other_info']}")
+        except Exception as e:
+            print(f"Error processing file {cache_path}: {e}")
+            breakpoint()
+        item['type'] = item_type
+        item['content'] = content
+        all_data.append(item)
+    return all_data
 

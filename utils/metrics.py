@@ -6,8 +6,7 @@ from typing import Literal, Optional
 import datasets
 import numpy as np
 import warnings
-from collections import Counter
-
+from collections import Counter, defaultdict
 import pydantic
 import tqdm
 from preprocess.utils import normalize_text
@@ -322,8 +321,6 @@ class Rouge_Score(BaseMetric):
         return output
 
 
-
-
 class Rouge_1(Rouge_Score):
     metric_name = "rouge-1"
 
@@ -381,7 +378,6 @@ class Rouge_L(Rouge_Score):
         return {"rouge-l": score}, metric_score_list
 
 
-
 class ZH_Rouge_Score(BaseMetric):
     metric_name = "zh_rouge_score"
     cached_scores = {}
@@ -410,8 +406,6 @@ class ZH_Rouge_Score(BaseMetric):
 
         self.cached_scores[(pred, tuple(golden_answers))] = output
         return output
-
-
 
 
 class ZH_Rouge_1(ZH_Rouge_Score):
@@ -472,8 +466,6 @@ class ZH_Rouge_L(ZH_Rouge_Score):
         return {"zh_rouge-l": score}, metric_score_list
 
 
-
-
 class BLEU(BaseMetric):
     metric_name = "bleu"
 
@@ -518,8 +510,6 @@ class BLEU(BaseMetric):
             score_list.append(bleu)
 
         return {"bleu": total_bleu}, score_list
-
-
 
 
 class LLMJudge(BaseMetric):
@@ -585,6 +575,73 @@ class LLMJudge(BaseMetric):
             "llm_judge_with_golden": score_with_golden,
             "llm_judge_without_golden": score_without_golden
         }, judge_list
+
+
+class SuccessAttempt(BaseMetric):
+    metric_name = "success_at_attempt"
+    def __init__(self, config):
+        super().__init__(config)
+        from agents.roles.evaluator import Evaluator
+        llm_args = config["judge_setting"]["llm_setting"]
+        generate_settings = config["judge_setting"]["generate_setting"]
+        self.llm_pipeline = Evaluator(
+            client_kwargs=llm_args,
+            generate_kwargs=generate_settings,
+            use_cache=False,
+            cache_dir="cache"  # or any other cache directory you prefer
+        )
+    
+    def calculate_metric(self, data):
+        question_list = data['question']
+        assert 'all_candidates_answers' in data.features, "Data must contain 'all_candidates_answers' field."
+        all_candidates_answers = data['all_candidates_answers']
+        golden_answers_list = self.get_dataset_answer(data)
+        assert len(question_list) == len(all_candidates_answers), "Length of question and all_candidates_answers must be the same."
+        assert len(question_list) == len(golden_answers_list), "Length of question and golden_answers must be the same."
+
+        metrics = []
+        for candidates, golden_answers, question in zip(all_candidates_answers, golden_answers_list, question_list):
+            candidate_with_rollout = defaultdict(list)
+            for candidate in candidates:
+                candidate_with_rollout[candidate[1]].append(candidate[0])
+            # sort by rollout_id
+            candidate_with_rollout = sorted(candidate_with_rollout.items(), key=lambda item: item[0])
+            success_at_attempt = 1000
+            for key, value in candidate_with_rollout:
+                if len(value) == 0:
+                    continue
+                user_question = [question] * len(value)
+                correct_answer = [golden_answers] * len(value)
+                responses = self.llm_pipeline.evaluate_final_answer(question=user_question, correct_answer=correct_answer, predicted_answer=value)
+                for r in responses:
+                    if r['decision']:
+                        success_at_attempt = key
+                        break
+                break
+            metrics.append(success_at_attempt)
+        # Compute the success at attempt metric that is whether the correct answer is found within the first k attempts
+        success_at_attempt_1 = sum(1 for x in metrics if x <= 1) / len(metrics)
+        success_at_attempt_2 = sum(1 for x in metrics if x <= 2) / len(metrics)
+        success_at_attempt_3 = sum(1 for x in metrics if x <= 3) / len(metrics)
+        success_at_attempt_4 = sum(1 for x in metrics if x <= 4) / len(metrics)
+        success_at_attempt_5 = sum(1 for x in metrics if x <= 5) / len(metrics)
+        success_at_attempt_6 = sum(1 for x in metrics if x <= 6) / len(metrics)
+        success_at_attempt_7 = sum(1 for x in metrics if x <= 7) / len(metrics)
+        success_at_attempt_8 = sum(1 for x in metrics if x <= 8) / len(metrics)
+        success_at_attempt_9 = sum(1 for x in metrics if x <= 9) / len(metrics)
+        success_at_attempt_10 = sum(1 for x in metrics if x <= 10) / len(metrics)
+        return {
+            "success_at_attempt_1": success_at_attempt_1,
+            "success_at_attempt_2": success_at_attempt_2,
+            "success_at_attempt_3": success_at_attempt_3,
+            "success_at_attempt_4": success_at_attempt_4,
+            "success_at_attempt_5": success_at_attempt_5,
+            "success_at_attempt_6": success_at_attempt_6,
+            "success_at_attempt_7": success_at_attempt_7,
+            "success_at_attempt_8": success_at_attempt_8,
+            "success_at_attempt_9": success_at_attempt_9,
+            "success_at_attempt_10": success_at_attempt_10
+        }, metrics 
 
 
 class CountToken(BaseMetric):

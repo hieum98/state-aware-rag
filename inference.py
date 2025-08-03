@@ -187,6 +187,12 @@ if __name__ == "__main__":
             dataset = dataset.rename_column("answer", "golden_answers")
         elif args.data_name == 'training_data':
             dataset = datasets.load_from_disk('data/train_data')
+            # Filter out examples with empty golden answers
+            dataset = dataset.filter(lambda x: x['golden_answers'] and len(x['golden_answers']) > 0, num_proc=64)
+            dataset = dataset.map(lambda x: {'golden_answers': [ans for ans in x['golden_answers'] if ans]}, num_proc=64)
+            dataset = dataset.filter(lambda x: x['golden_answers'] and len(x['golden_answers']) > 0, num_proc=64)
+            # Filter out examples with empty questions
+            dataset = dataset.filter(lambda x: x['question'] and len(x['question'].strip()) > 0, num_proc=64)
         else:
             raise ValueError(f"Unsupported dataset name: {args.data_name}")
 

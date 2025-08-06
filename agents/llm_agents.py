@@ -396,6 +396,10 @@ class LLMAgent:
             
 
 if __name__ == "__main__":
+    ## Newer flash-attn can cause error 
+    ## ImportError: /lib64/libc.so.6: version `GLIBC_2.32' not found (required by /home/hieum/uonlp/miniconda3/envs/axololt/lib/python3.11/site-packages/flash_attn_2_cuda.cpython-311-x86_64-linux-gnu.so)
+    ## Downgrade to flash-attn-2.7.4.post1 can fix 
+    ## pip install flash-attn==2.7.4.post1 --no-build-isolation
     ## Deploy the llm server via sglang
     ## python -m sglang.launch_server --host 0.0.0.0 --model-path Qwen/Qwen3-8B --reasoning-parser qwen3 # --port 30000 
     online_model_kwargs = {

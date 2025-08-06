@@ -3,6 +3,7 @@ import json
 import os
 import pprint
 import shutil
+import random
 from typing import List, Optional, TextIO, Union
 import tqdm
 from colorama import Fore, Style
@@ -166,8 +167,20 @@ def search(
     for _, _, node in RenderTree(root_node):
         nodes.append(node)
         if node.node_type is NodeType.FINAL_ANSWER:
-            answers.append(node.state['node_content'])
-            full_answers.append(node.state['detailed_answer'])
+            answer = node.state['node_content']
+            detailed_answer = node.state['detailed_answer']
+            if (answer is None or answer.strip() == "") and (detailed_answer is None or detailed_answer.strip() == ""):
+                continue
+            if answer is not None and answer.strip() != "":
+                answers.append(answer)
+            else:
+                answers.append(detailed_answer)
+            
+            if detailed_answer is not None and detailed_answer.strip() != "":
+                full_answers.append(detailed_answer)
+            else:
+                full_answers.append(answer)
+    
             solutions.append(node.get_node())
             reasoning_path = node.get_path()
             reasoning_path, _ = node.get_reasoning_trace(path=reasoning_path)
@@ -183,30 +196,43 @@ def search(
         final_reasoning = None
     try:
         voted_answer, _final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+        final_reasoning = _final_reasoning 
     except Exception as e:
         voted_answer = evaluator.majority_vote(question=user_question, answers=answers)
-    if isinstance(voted_answer, str) and voted_answer not in ['No valid answer generated.'] and  voted_answer.strip() != "":
-        try:
-            questions = [user_question] * len(reasoning_paths)
-            voted_answers = [voted_answer] * len(reasoning_paths)
-            response = evaluator.evaluate_final_answer(question=questions, correct_answer=voted_answers, predicted_answer=reasoning_paths)
-            assert len(response) == len(reasoning_paths), "Response length does not match reasoning paths length."
-            voted_reasonings = [rea for res, rea in zip(response, reasoning_paths) if res['decision']]
-            final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=voted_reasonings)
-        except Exception as e:
-            try:
-                final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
-            except Exception as e:
-                print(f"Error synthesizing final answer: {e}")
-                final_answer = evaluator.majority_vote(question=user_question, answers=answers)
-                final_reasoning = None
-    else:
-        try:
-            final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
-        except Exception as e:
-            print(f"Error synthesizing final answer: {e}")
-            final_answer = evaluator.majority_vote(question=user_question, answers=answers)
-            final_reasoning = None
+    final_answer = voted_answer
+    # if isinstance(voted_answer, str) and voted_answer not in ['No valid answer generated.'] and  voted_answer.strip() != "":
+    #     try:
+    #         questions = [user_question] * len(reasoning_paths)
+    #         voted_answers = [voted_answer] * len(reasoning_paths)
+    #         response = evaluator.evaluate_final_answer(question=questions, correct_answer=voted_answers, predicted_answer=reasoning_paths)
+    #         assert len(response) == len(reasoning_paths), "Response length does not match reasoning paths length."
+    #         voted_reasonings = [rea for res, rea in zip(response, reasoning_paths) if res['decision']]
+    #         voted_reasonings = list(set(voted_reasonings))  # Remove duplicates
+    #         random.shuffle(voted_reasonings)  # Shuffle to ensure randomness in selection
+    #         total_length = 0
+    #         selected_reasonings = []
+    #         while total_length < 15000:
+    #             # Randomly select reasoning paths until the total length is less than 15000 tokens to avoid exceeding the limit
+    #             path = voted_reasonings.pop() if voted_reasonings else None
+    #             if path is None:
+    #                 break
+    #             selected_reasonings.append(path)
+    #             total_length += len(path.split())
+    #         final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=voted_reasonings)
+    #     except Exception as e:
+    #         try:
+    #             final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+    #         except Exception as e:
+    #             print(f"Error synthesizing final answer: {e}")
+    #             final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+    #             final_reasoning = None
+    # else:
+    #     try:
+    #         final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+    #     except Exception as e:
+    #         print(f"Error synthesizing final answer: {e}")
+    #         final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+    #         final_reasoning = None
     
     if save_tree:
         # check if the save directory does not exist, create it

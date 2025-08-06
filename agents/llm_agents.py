@@ -404,8 +404,8 @@ if __name__ == "__main__":
         # 'url': None,  # Use default URL for the model
         # 'api_key': None,  # Set your API key if required
         # 'aws_profile_name': 'hieu', # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
-        'model_name': 'openai/qwen3-8B', 
-        'url': 'http://ip-10-4-226-205:30000/v1', 
+        'model_name': 'openai/Qwen3-8B', 
+        'url': 'http://127.0.0.1:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,

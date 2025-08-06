@@ -62,6 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("--retriever_config", type=str, default="configs/infer/retriever_config.yaml", help="Path to retriever configuration file.")
     parser.add_argument("--mcts_config", type=str, default="configs/infer/MCTS_config.yaml", help="Path to MCTS configuration file.")
     parser.add_argument("--results_dir", type=str, default="results/mcts", help="Directory to save results.")
+    parser.add_argument("--num_proc", type=int, default=64, help="Number of processes to use for parallel processing.")
 
     args = parser.parse_args()
     assert args.question is not None or args.data_name is not None, "Either question or data_name must be provided."
@@ -210,7 +211,7 @@ if __name__ == "__main__":
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
             config=mcts_args
-            ), num_proc=256)
+            ), num_proc=args.num_proc)
         dataset.save_to_disk(f"{args.results_dir}")
     
     # clear_agent_cache(generator, extractor, evaluator)

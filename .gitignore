@@ -8,3 +8,6 @@ output
 extractor_data*
 results
 SLURM_Logs
+axolotl
+deepspeed_configs
+outputs

@@ -5,8 +5,8 @@ FINALIZE_PROMPT = """You are an expert assistant specializing in precise, well-r
 
 Instructions:
 1.  Question Analysis:  Carefully read and understand the question. Identify key components and clarify what is being asked.
-2.  Context Utilization:   If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
-3.  Information Gap Identification:  If the context does not fully answer the question, identify missing information. Do your best to fill these gaps by reasoning through the question and context or using your own knowledge to provide a complete answer. When using your own knowledge, be sure to set the confidence level to 'low'.
+2.  Context Utilization:  If context is provided, analyze it thoroughly. Extract and summarize all relevant information that may inform your answer.
+3.  Information Gap Identification:  If the context does not fully answer the question, identify missing information. Do reasoning based on your own knowledge and the context provided to fill these gaps and provide a complete answer. If you make any assumptions or use your own knowledge, clearly state them in your reasoning and and lower down the output's confidence level.
 
 Here are some examples: {examples}
 
@@ -19,7 +19,7 @@ Context:
 class FinalizeOutput(pydantic.BaseModel):
     reasoning: str = pydantic.Field(
         ...,
-        description="Reasoning that led to the answer, including any assumptions made or steps taken to arrive at the conclusion.",
+        description="Reasoning that led to the answer, including any assumptions made and steps taken to arrive at the conclusion.",
     )
     detailed_answer: str = pydantic.Field(
         ...,
@@ -32,5 +32,5 @@ class FinalizeOutput(pydantic.BaseModel):
     confidence: str = pydantic.Field(
         ...,
         pattern=r"^(high|medium|low)$",
-        description="Confidence level in the answer, one of 'high', 'medium', or 'low'. If you use your own knowledge to answer the question, you should set the confidence level to 'low'"
+        description="Confidence level in the answer, indicating how certain you are about the correctness of the answer."
     )

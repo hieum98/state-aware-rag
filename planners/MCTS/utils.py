@@ -55,6 +55,7 @@ def print_tree_from_root(root_node: ReasoningNode):
         tree_str = f"{pre}{node_details}"
         print(tree_str)
 
+
 def find_valid_solution_nodes(node: ReasoningNode) -> list[ReasoningNode]:
     """
     Find all valid solution nodes in the reasoning tree.
@@ -115,7 +116,7 @@ def search(
         save_dir: str = "mcts_trees",
         top_k: int = 5,
         verbose: bool = False,
-):  
+    ):  
     # Initialize the MCTS searcher with the given exploration weight
     mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=False)
 
@@ -169,17 +170,8 @@ def search(
         if node.node_type is NodeType.FINAL_ANSWER:
             answer = node.state['node_content']
             detailed_answer = node.state['detailed_answer']
-            if (answer is None or answer.strip() == "") and (detailed_answer is None or detailed_answer.strip() == ""):
-                continue
-            if answer is not None and answer.strip() != "":
-                answers.append(answer)
-            else:
-                answers.append(detailed_answer)
-            
-            if detailed_answer is not None and detailed_answer.strip() != "":
-                full_answers.append(detailed_answer)
-            else:
-                full_answers.append(answer)
+            answers.append(answer)
+            full_answers.append(detailed_answer)
     
             solutions.append(node.get_node())
             reasoning_path = node.get_path()
@@ -195,44 +187,23 @@ def search(
         final_answer = None
         final_reasoning = None
     try:
-        voted_answer, _final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
-        final_reasoning = _final_reasoning 
+        total_length = sum([len(full_answer.split()) for full_answer in full_answers])
+        if total_length < 15000: # Prevent exceeding the token limit
+            final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
+        else:
+            l = 0
+            selected_answers = []
+            random.shuffle(full_answers)  # Shuffle the full answers to ensure randomness in selection
+            for full_answer in full_answers:
+                if l < 10000:
+                    selected_answers.append(full_answer)
+                    l += len(full_answer.split())
+                else:
+                    break
+            final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=selected_answers)
     except Exception as e:
-        voted_answer = evaluator.majority_vote(question=user_question, answers=answers)
-    final_answer = voted_answer
-    # if isinstance(voted_answer, str) and voted_answer not in ['No valid answer generated.'] and  voted_answer.strip() != "":
-    #     try:
-    #         questions = [user_question] * len(reasoning_paths)
-    #         voted_answers = [voted_answer] * len(reasoning_paths)
-    #         response = evaluator.evaluate_final_answer(question=questions, correct_answer=voted_answers, predicted_answer=reasoning_paths)
-    #         assert len(response) == len(reasoning_paths), "Response length does not match reasoning paths length."
-    #         voted_reasonings = [rea for res, rea in zip(response, reasoning_paths) if res['decision']]
-    #         voted_reasonings = list(set(voted_reasonings))  # Remove duplicates
-    #         random.shuffle(voted_reasonings)  # Shuffle to ensure randomness in selection
-    #         total_length = 0
-    #         selected_reasonings = []
-    #         while total_length < 15000:
-    #             # Randomly select reasoning paths until the total length is less than 15000 tokens to avoid exceeding the limit
-    #             path = voted_reasonings.pop() if voted_reasonings else None
-    #             if path is None:
-    #                 break
-    #             selected_reasonings.append(path)
-    #             total_length += len(path.split())
-    #         final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=voted_reasonings)
-    #     except Exception as e:
-    #         try:
-    #             final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
-    #         except Exception as e:
-    #             print(f"Error synthesizing final answer: {e}")
-    #             final_answer = evaluator.majority_vote(question=user_question, answers=answers)
-    #             final_reasoning = None
-    # else:
-    #     try:
-    #         final_answer, final_reasoning = evaluator.synthesize_final_answer(question=user_question, reasoning_paths=full_answers)
-    #     except Exception as e:
-    #         print(f"Error synthesizing final answer: {e}")
-    #         final_answer = evaluator.majority_vote(question=user_question, answers=answers)
-    #         final_reasoning = None
+        final_answer = evaluator.majority_vote(question=user_question, answers=answers)
+        final_reasoning = final_answer  # Fallback to the final answer as reasoning if synthesis fails
     
     if save_tree:
         # check if the save directory does not exist, create it
@@ -263,7 +234,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://ip-10-4-241-174:30000/v1', 
+        'url': 'http://ip-10-4-225-181:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -288,7 +259,7 @@ if __name__ == "__main__":
         'temperature': 1,  
         'n': 3, 
         'top_p': 0.9,
-        'max_tokens': 1024*8,  # Set to a high value to allow for long responses
+        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,
@@ -309,7 +280,7 @@ if __name__ == "__main__":
         'temperature': 0.1,  
         'n': 5, 
         'top_p': 0.9,
-        'max_tokens': 1024*8,  # Set to a high value to allow for long responses
+        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,
@@ -330,7 +301,7 @@ if __name__ == "__main__":
         'temperature': 0.1,  
         'n': 1, 
         'top_p': 0.9,
-        'max_tokens': 1024*8,  # Set to a high value to allow for long responses
+        'max_tokens': 1024*4,  # Set to a high value to allow for long responses
         # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
         # For greedy decoding set it to 1
         'top_k': 20,

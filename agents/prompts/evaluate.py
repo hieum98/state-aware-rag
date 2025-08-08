@@ -29,11 +29,11 @@ class EvaluateAnswerOutput(pydantic.BaseModel):
     )
 
 
-JUDGE_ANSWER_PROMPT = """You will be given a user_question and system_answer couple. Your task is to provide a 'total rating' scoring how well the system_answer answers the user concerns expressed in the user_question. Give your answer as a float on a scale of 0 to 10, where 0 means that the system_answer is not helpful at all, and 10 means that the answer completely and helpfully addresses the question. You will may or may not be given a 'correct_answer' to compare against, when it is provided, you should use it to help inform your rating whether the system_answer is correct or not due to the fact that it is a good indicator of how well the system_answer addresses the user_question. However, please note that you should not only focus on the correctness of the system_answer, but also on how well, comprehensively, and helpfully the system_answer addresses the user_question such as whether it provides helpful information to the user, whether it is clear and concise, and whether it is relevant to the user_question. Please keep in mind that the user_question may be ambiguous, complex, or open-ended, and the system_answer may not be perfect but may still be helpful. Therefore, you should use your best judgment to evaluate the system_answer based on the following criteria:
-1.   Clarity: How clear and concise is the system_answer? 
-2.   Helpfulness: How helpful is the system_answer to the user? The system_answer may not be perfect, but it should still provide helpful information to the user. 
-3.   Correctness: How correct is the system_answer?Note that, if a correct_answer is provided and the system_answer is marked as correct, you always give a rating of 10, as it is a good indicator that the system_answer addresses the user_question well. 
+JUDGE_ANSWER_PROMPT = """You are an expert evaluator. Your task is to provide a total rating on a scale of 0.0 to 10.0 for how well the system_answer resolves the user_question. Where 0.0 is completely unhelpful, irrelevant, or incorrect, and 10.0 is a perfect answer that is helpful, correct, and clear.
 
+Evaluation Criteria:
+    - Helpfulness & Relevance: How does the answer address the user's core need?
+    - Correctness: Is the information accurate? If a correct_answer is provided and the system_answer matches it, you must give a rating of 10.0.
 
 Here are some examples: {examples}
 Now, please evaluate the following question and answer:

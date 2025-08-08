@@ -221,6 +221,7 @@ class ReasoningNode(Node, NodeMixin):
                 self.memory = list(set(self.memory))
                 self.memory.sort()  # Sort to ensure consistent order
             memory = copy.deepcopy(self.memory)
+            memory = [f"- {item}" for i, item in enumerate(memory)] if isinstance(memory, list) else memory
             memory_knowledge = "\n".join(memory) if isinstance(memory, list) else memory
             additional_info['memory_knowledge'] = copy.deepcopy(memory)
             additional_info['question'] = sub_question
@@ -258,16 +259,6 @@ class ReasoningNode(Node, NodeMixin):
         retrieved_docs = list(set(retrieved_docs))  # Remove duplicates
         retrieved_docs = [doc.strip() for doc in retrieved_docs if doc.strip()]  # Remove empty documents
         retrieved_docs.sort()  # Sort to ensure consistent order
-
-        # retrieved_information = ""
-        # for i, doc in enumerate(retrieved_docs):
-        #     retrieved_information += f"Retrieved information {i+1}:\n{doc}\n"
-        # additional_info['retrieved_docs'] = retrieved_docs
-        # additional_info['question'] = question
-        # extracted_retrieval_information = self.extractor.extract(question=question, document=retrieved_information, additional_info=additional_info)[0]
-        # external_information = []
-        # if extracted_retrieval_information['decision'] == 'relevant':
-        #     external_information = extracted_retrieval_information['extracted_information']
         
         all_additional_info = []
         for doc in retrieved_docs:
@@ -345,9 +336,11 @@ class ReasoningNode(Node, NodeMixin):
         external_information = self.explore(question=user_question)  # Explore the external knowledge base
         important_information = ""
         if external_information:
+            external_information = [f"- {item}" for item in external_information if item]  # Remove empty strings
             external_data = "\n".join(external_information)
             important_information += f"\t**Information from external KB**\n{external_data}\n----------\n"
         if memory_information:
+            memory_information = [f"- {item}" for item in memory_information if item]
             memory_data = "\n".join(memory_information)
             important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
         if reasoning_trace:
@@ -359,18 +352,22 @@ class ReasoningNode(Node, NodeMixin):
         nodes = []
         all_answers = []
         for item in response:
-            answer = item['answer']
-            if answer is None or answer.strip() == "":
-                answer = f"{item['detailed_answer']}" 
-            detailed_answer = ""
-            if item['detailed_answer'] is not None and item['detailed_answer'].strip() != "":
-                detailed_answer = item['detailed_answer']
-            if item['reasoning'] is not None and item['reasoning'].strip() != "":
-                detailed_answer += f"\n{item['reasoning']}"
-            if self.verbose:
-                print(f"Generated final answer: {answer}")
+            answer = item['answer'] if item['answer'] is not None and item['answer'].strip() != "" else None
+            detailed_answer = item['detailed_answer'] if item['detailed_answer'] is not None and item['detailed_answer'].strip() != "" else None
+            reasoning = item['reasoning'] if item['reasoning'] is not None and item['reasoning'].strip() != "" else None
+            if answer is None and detailed_answer is None:
+                continue
+            if answer is None:
+                answer = detailed_answer
+            elif detailed_answer is None:
+                detailed_answer = answer
+            if reasoning is None:
+                reasoning = reasoning_trace
+            detailed_answer += f"{detailed_answer}\nReasoning: {reasoning}"
             if answer in all_answers:
                 continue  # Skip duplicate answers
+            if self.verbose:
+                print(f"Generated final answer: {answer}\nDetailed answer: {detailed_answer}")
             all_answers.append(answer)
             node = ReasoningNode(
                 parent=self,
@@ -395,7 +392,9 @@ class ReasoningNode(Node, NodeMixin):
         user_question = self.node_config['user_question']
         path = self.get_path()
         reasoning_trace, _ = self.get_reasoning_trace(path)
-        memory_knowledge = "\n".join(self.memory) if self.memory else None
+        memory_knowledge = copy.deepcopy(self.memory) if self.memory else None
+        memory_knowledge = [f"- {item}" for item in memory_knowledge if item] if isinstance(memory_knowledge, list) else memory_knowledge
+        memory_knowledge = "\n".join(memory_knowledge) if isinstance(memory_knowledge, list) else memory_knowledge
 
         # If the node is a rephrased question and its question is not the same as the user question,
         # Answer the rephrased sub-question
@@ -405,9 +404,11 @@ class ReasoningNode(Node, NodeMixin):
             external_information = self.explore(question=sub_question)  #
             important_information = ""
             if external_information:
+                external_information = [f"- {item}" for item in external_information if item]  # Remove empty strings
                 external_data = "\n".join(external_information)
                 important_information += f"\t**Information from external KB**\n{external_data}\n----------\n"
             if memory_information:
+                memory_information = [f"- {item}" for item in memory_information if item]  # Remove empty strings
                 memory_data = "\n".join(memory_information)
                 important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
             if reasoning_trace:
@@ -467,9 +468,11 @@ class ReasoningNode(Node, NodeMixin):
                     external_information = self.explore(question=sub_question)  # Explore the external knowledge base
                     important_information = ""
                     if memory_information:
+                        memory_information = [f"- {item}" for item in memory_information if item]
                         memory_data = "\n".join(memory_information)
                         important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
                     if external_information:
+                        external_information = [f"- {item}" for item in external_information if item]
                         all_external_information.extend(external_information)
                         external_data = "\n".join(external_information)
                         important_information += f"\t**Information from external KB**\n{external_data}\n----------\n"
@@ -543,9 +546,11 @@ class ReasoningNode(Node, NodeMixin):
         external_information = self.explore(question=current_step_objective)  # Explore the external knowledge base
         important_information = ""
         if memory_information:
+            memory_information = [f"- {item}" for item in memory_information if item]  # Remove empty strings
             memory_data = "\n".join(memory_information)
             important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
         if external_information:
+            external_information = [f"- {item}" for item in external_information if item]  # Remove empty strings
             external_data = "\n".join(external_information)
             important_information += f"\t**Information from external KB**\n{external_data}\n----------\n"
         if self.verbose:
@@ -587,6 +592,7 @@ class ReasoningNode(Node, NodeMixin):
         memory_information = self.reflect(sub_question=user_question)  # Reflect on the memory
         important_information = ""
         if memory_information:
+            memory_information = [f"- {item}" for item in memory_information if item]  # Remove empty strings
             memory_data = "\n".join(memory_information)
             important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
         if reasoning_trace:
@@ -598,7 +604,7 @@ class ReasoningNode(Node, NodeMixin):
         nodes = []
         all_syntheses = []
         for item in response:
-            if not item['synthesis']:
+            if not item['synthesis'] or item['synthesis'].strip() == "":
                 continue
             if item['synthesis'] in all_syntheses:
                 continue
@@ -607,11 +613,14 @@ class ReasoningNode(Node, NodeMixin):
                 print(f"Generated synthesis: {item['synthesis']}")
             answerable_main_question = item['answerable_main_question']
             if answerable_main_question:
+                answer = item['synthesis']
+                detailed_answer = item['synthesis']
                 node = ReasoningNode(
                     parent=self,
                     node_type=NodeType.FINAL_ANSWER,
                     depth=self.tree_depth + 1,
-                    answer=item['synthesis'],
+                    answer=answer,
+                    reasoning=detailed_answer,
                     confidence=item['confidence'],
                     **self.node_config
                 )
@@ -641,18 +650,14 @@ class ReasoningNode(Node, NodeMixin):
             explored_information += external_information
             children = final_answer_nodes
         elif self.node_type == NodeType.USER_QUESTION:
-            final_answer_nodes, external_information = self.generate_final_answer_node()
-            explored_information += external_information
             sub_qa_nodes, external_information = self.generate_subQA_node()
             explored_information += external_information
             rephrase_nodes = self.generate_rephrase_question_node()
-            children = final_answer_nodes + sub_qa_nodes + rephrase_nodes
+            children = sub_qa_nodes + rephrase_nodes
         elif self.node_type == NodeType.FINAL_ANSWER:
             # If the node is a final answer node, it has no children
             raise ValueError("Final answer nodes cannot have children.")
         elif self.node_type == NodeType.SUB_QA_NODE:
-            final_answer_nodes, external_information = self.generate_final_answer_node()
-            explored_information += external_information
             rephrase_nodes = self.generate_rephrase_question_node()
             self_corrected_nodes, external_information = self.generate_self_corrected_node()
             explored_information += external_information
@@ -660,28 +665,23 @@ class ReasoningNode(Node, NodeMixin):
             explored_information += external_information
             synthesis_nodes = self.generate_synthesis_node()
             rephrase_nodes = self.generate_rephrase_question_node()
-            children = final_answer_nodes + rephrase_nodes + self_corrected_nodes + synthesis_nodes + sub_qa_nodes
+            children = rephrase_nodes + self_corrected_nodes + synthesis_nodes + sub_qa_nodes
         elif self.node_type == NodeType.REPHASED_QUESTION_NODE:
-            final_answer_nodes, external_information = self.generate_final_answer_node()
-            explored_information += external_information
             sub_qa_nodes, external_information = self.generate_subQA_node()
             explored_information += external_information
-            children = final_answer_nodes + sub_qa_nodes
+            children = sub_qa_nodes
         elif self.node_type == NodeType.SELF_CORRECTED_NODE:
-            final_answer_nodes, external_information = self.generate_final_answer_node()
-            explored_information += external_information
             sub_qa_nodes, external_information = self.generate_subQA_node()
             explored_information += external_information
             synthesis_nodes = self.generate_synthesis_node()
-            children = final_answer_nodes + sub_qa_nodes + synthesis_nodes
+            children = sub_qa_nodes + synthesis_nodes
         elif self.node_type == NodeType.SYNTHESIS_NODE:
-            final_answer_nodes, external_information = self.generate_final_answer_node()
-            explored_information += external_information
             sub_qa_nodes, external_information = self.generate_subQA_node()
             explored_information += external_information
-            children = final_answer_nodes + sub_qa_nodes
+            children = sub_qa_nodes
         else:
             raise ValueError(f"Invalid node type: {self.node_type}. Must be one of {list(NodeType)}.")
+        children = list(set(children))  # Remove duplicates
         
         if self.verbose:
             print(f"Memory at depth: {self.tree_depth}:")

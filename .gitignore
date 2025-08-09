@@ -13,3 +13,4 @@ deepspeed_configs
 outputs
 axololt
 last_run_prepared
+wandb

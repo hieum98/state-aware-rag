@@ -249,14 +249,18 @@ class RetrieverAgent:
 
 if __name__ == "__main__":
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-225-181:12345/search",
+        "url": "http://ip-10-4-225-181:5000/search",
         "retrieval_topk": 64,
         "query_instruction": None,
     }
     retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    query = "What are the birth dates of Miroslav Štolfa?"
+    query = "A Day of Fury is a 1956 American Western film directed by Harmon Jones and starring Dale Robertson, Mara Corday and Jock Mahoney. The working title of the film was Jagade, the name of Robertson's character."
     # query = "Where was Ning Hao born?"
     # query = "When was the Declaration of Independence signed?"
-    results = retriever_agent.search(query, top_k=5, instruction=None)
+    results = retriever_agent.search(query, top_k=10, instruction=None)
+    # check if 'A Day Of Fury' is in the results
     breakpoint()
+    for item in results['retrieved_docs']:
+        if '1956' in item['contents']:
+            breakpoint()

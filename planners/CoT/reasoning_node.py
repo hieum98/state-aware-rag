@@ -442,6 +442,8 @@ class ReasoningNode(Node, NodeMixin):
         else:
             raise ValueError(f"Invalid node type: {self.node_type}. Must be one of {list(NodeType)}.")
         children = list(set(children))  # Remove duplicates
+        # remove the None children
+        children = [child for child in children if child]
         
         if self.verbose:
             print(f"Memory at depth: {self.tree_depth}:")
@@ -456,7 +458,9 @@ class ReasoningNode(Node, NodeMixin):
         intermediate_conclusions = list(set(intermediate_conclusions))  # Remove duplicates
         intermediate_conclusions.sort()
         new_memory = self.update_memory(intermediate_conclusions=intermediate_conclusions, step_explored_information=explored_information)
-        assert len(children) > 0, f"No children generated for node type: {self.print_node()}"
+        if len(children) == 0:
+            print(f"No children generated for node type: {self.print_node()}")
+            children = []
         return children, new_memory
     
     def find_children(self, rollout_id: Optional[int] = None):

@@ -99,12 +99,12 @@ if __name__ == "__main__":
             search_args.num_rollouts = args.n_rollouts
         use_cot = False
         use_mcts = True
-        results_dir = os.path.join(args.results_dir, 'mcts')
+        results_dir = os.path.join(args.results_dir, 'mcts', f"Generator_{llm_args.model_name}", f"Retriever_{retriever_args.model_name}", f"Extractor_{extractor_llm_args.model_name}")
     else:
         search_args = search_hf_parser.parse_yaml_file(args.search_config)[0]
         use_cot = True
         use_mcts = False
-        results_dir = os.path.join(args.results_dir, 'cot')
+        results_dir = os.path.join(args.results_dir, 'cot', f"Generator_{llm_args.model_name}", f"Retriever_{retriever_args.model_name}", f"Extractor_{extractor_llm_args.model_name}")
     search_args.save_dir = os.path.join(results_dir, 'result_trees')
     # Ensure the directory exists
     os.makedirs(search_args.save_dir, exist_ok=True)

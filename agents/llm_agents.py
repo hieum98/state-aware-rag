@@ -285,17 +285,20 @@ class LLMAgent:
                 json.dump(to_save_data, f, indent=4)
     
     def load_from_cache(self, cache_file: str, output_schema) -> List[Dict[str, Any]]:
-        with open(cache_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            if output_schema is not None:
-                assert issubclass(output_schema, pydantic.BaseModel), "Output schema must be a subclass of pydantic.BaseModel"
-                for item in data:
-                    try:
-                        item['output'] = output_schema.model_validate(item['output'])
-                    except:
-                        # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
-                        # print(f"Raw content: {item['output']}")
-                        pass
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if output_schema is not None:
+                    assert issubclass(output_schema, pydantic.BaseModel), "Output schema must be a subclass of pydantic.BaseModel"
+                    for item in data:
+                        try:
+                            item['output'] = output_schema.model_validate(item['output'])
+                        except:
+                            # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
+                            # print(f"Raw content: {item['output']}")
+                            pass
+        except:
+            raise "[Warning] Error loading cache file {}".format(cache_file)
         # print(f"Loaded responses from cache file: {cache_file}")
         return data
     
@@ -315,7 +318,7 @@ class LLMAgent:
         try:
             response = self.load_from_cache(cache_file, output_schema)
             return index, response
-        except FileNotFoundError:
+        except:
             index, response = self.client.generate(input_args, **kwargs)
             self.save_to_cache(cache_file, response, input=messages, any_other_info=any_other_info)
             return index, response
@@ -341,7 +344,7 @@ class LLMAgent:
                 output_schema = kwargs.get('output_schema', None)
                 response = self.load_from_cache(cache_file, output_schema)
                 cached_responses.append((i, response))
-            except FileNotFoundError:
+            except:
                 to_compute_responses.append((messages, i, cache_file))
         if to_compute_responses:
             messages = [item[0] for item in to_compute_responses]

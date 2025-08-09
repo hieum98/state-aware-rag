@@ -696,6 +696,7 @@ class ReasoningNode(Node, NodeMixin):
         else:
             raise ValueError(f"Invalid node type: {self.node_type}. Must be one of {list(NodeType)}.")
         children = list(set(children))  # Remove duplicates
+        children = [child for child in children if child]
         
         if self.verbose:
             print(f"Memory at depth: {self.tree_depth}:")

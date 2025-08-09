@@ -94,6 +94,7 @@ def search(
 
     # Start the search from the root node
     nodes = []
+    all_answer_nodes = []
     solutions = []
     answers = []
     full_answers = []
@@ -132,7 +133,10 @@ def search(
             root_node.evaluator.client.random_seed = i
             
         cot = do_rollout(node=root_node)
-        answer_node = cot[-1] if cot[-1].is_valid_leaf() else None
+        answer_node = cot[-1]
+        if answer_node.node_type is not NodeType.FINAL_ANSWER:
+            all_answer_nodes.append(answer_node)
+            print(f"Warning: The last node in the rollout is not a final answer node, it is of type {answer_node.node_type}.")
         if verbose:
             print_tree_from_root(root_node)
         if verbose:
@@ -144,20 +148,24 @@ def search(
 
         for _, _, node in RenderTree(root_node):
             nodes.append(node)
-            if node.node_type is NodeType.FINAL_ANSWER:
-                answer = node.state['node_content']
-                detailed_answer = node.state['detailed_answer']
-                answers.append(answer)
-                full_answers.append(detailed_answer)
-        
-                solutions.append(node.get_node())
+            if node.node_type is NodeType.FINAL_ANSWER or node in all_answer_nodes:
                 reasoning_path = node.get_path()
                 reasoning_path, _ = node.get_reasoning_trace(path=reasoning_path)
+                if node.node_type is NodeType.FINAL_ANSWER:
+                    answer = node.state['node_content']
+                    detailed_answer = node.state['detailed_answer']
+                else:
+                    answer = reasoning_path
+                    detailed_answer = reasoning_path
+                answers.append(answer)
+                full_answers.append(detailed_answer)
+                solutions.append(node.get_node())
+            
                 if reasoning_path is not None:
                     reasoning_paths.append(reasoning_path)
                 else:
                     # If the reasoning path is None, we only append the node content of the final answer
-                    reasoning_paths.append(node.state['detailed_answer'])
+                    reasoning_paths.append(detailed_answer)
     # Major voting to find the best solution from the solution nodes of the final tree
     if len(answers) == 0:
         print("No valid solution nodes found in the reasoning tree.")

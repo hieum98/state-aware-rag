@@ -44,6 +44,9 @@ def do_rollout(node: Node):
         if current_node.is_terminal():
             return path
         children = current_node.find_children()
+        if len(children) == 0:
+            print(f"No children found for node type: {current_node.print_node()}")
+            return path
         if all([child.is_valid_leaf() for child in children]):
             current_node = random.choice(list(children))
         else:

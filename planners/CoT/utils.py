@@ -10,7 +10,7 @@ from colorama import Fore, Style
 from anytree import RenderTree
 
 from preprocess.utils import simple_preprocess
-from planners.CoT.backbone import CoT
+from planners.CoT.backbone import do_rollout
 from planners.CoT.reasoning_node import *
 
 # Modified from https://vscode.dev/github/zhentingqi/rStar/blob/main/run_src/rstar_utils.py#L60-L120
@@ -72,15 +72,14 @@ def search(
         max_depth: int = 15,
         golden_answer: Optional[Union[str, List[str]]] = None,
         # CoT parameters
-        num_rollouts: int = 16,
+        num_rollouts: int = 1,
         save_tree: bool = False,
-        save_dir: str = "mcts_trees",
+        save_dir: str = "cot_trees",
         top_k: int = 5,
         verbose: bool = False,
         memory: Optional[List[str]] = None,
+        **kwargs
     ):  
-    # Initialize the CoT searcher 
-    cot_searcher = CoT()
 
     # Normalize the user question and golden answer if provided
     if user_question is not None:
@@ -94,32 +93,31 @@ def search(
             raise ValueError("golden_answer must be a string or a list of strings.")
 
     # Start the search from the root node
-    _node = ReasoningNode(
-        parent=None,
-        node_type=NodeType.USER_QUESTION,
-        depth=0,
-        # Components
-        generator=generator,
-        evaluator=evaluator,
-        extractor=extractor,
-        retriever=retriever,
-        # Optional parameters
-        max_depth=max_depth,
-        golden_answer=golden_answer,
-        user_question=user_question,
-        question_id=question_id,
-        top_k=top_k,  # Set the top_k for the retriever
-        verbose=False,
-    )
-    if memory is not None:
-        _node.set_memory(memory)
     nodes = []
     solutions = []
     answers = []
     full_answers = []
     reasoning_paths = []
     for i in range(num_rollouts):
-        root_node = copy.deepcopy(_node)  # Deep copy the root node for each rollout
+        root_node =  ReasoningNode(
+            parent=None,
+            node_type=NodeType.USER_QUESTION,
+            depth=0,
+            # Components
+            generator=generator,
+            evaluator=evaluator,
+            extractor=extractor,
+            retriever=retriever,
+            # Optional parameters
+            max_depth=max_depth,
+            golden_answer=golden_answer,
+            user_question=user_question,
+            question_id=question_id,
+            top_k=top_k,  # Set the top_k for the retriever
+            verbose=False,
+        )
+        if memory is not None:
+            root_node.set_memory(memory)
         if root_node.generator.client.random_seed is not None:
             root_node.generator.client.random_seed = root_node.generator.client.random_seed + i
         else:
@@ -133,7 +131,7 @@ def search(
         else:
             root_node.evaluator.client.random_seed = i
             
-        cot = cot_searcher.do_rollout(node=root_node)
+        cot = do_rollout(node=root_node)
         answer_node = cot[-1] if cot[-1].is_valid_leaf() else None
         if verbose:
             print_tree_from_root(root_node)

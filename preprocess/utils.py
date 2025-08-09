@@ -84,9 +84,11 @@ def process_extractor_data_from_cache(cache_path: str):
                 'output': output,
                 'reasoning': raw_data['reasoning'],
             }
-            if 'retrieved_docs' in raw_data['any_other_info']:
+            if 'retrieved_doc' in raw_data['any_other_info']:
                 item_type = 'explore'
-                content = raw_data['any_other_info']['retrieved_docs']
+                content = raw_data['any_other_info']['retrieved_doc']
+                if isinstance(content, str):
+                    content = [content]
             elif 'memory_knowledge' in raw_data['any_other_info']:
                 item_type = 'reflect'
                 content = raw_data['any_other_info']['memory_knowledge']

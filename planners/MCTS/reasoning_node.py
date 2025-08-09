@@ -606,7 +606,7 @@ class ReasoningNode(Node, NodeMixin):
         important_information = ""
         if memory_information:
             memory_information = [f"-{item}" if not item.startswith("-") else item
-                                  for item in memory_information if item.strip]  # Remove empty strings
+                                  for item in memory_information if item.strip()]  # Remove empty strings
             memory_data = "\n".join(memory_information)
             important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
         if reasoning_trace:

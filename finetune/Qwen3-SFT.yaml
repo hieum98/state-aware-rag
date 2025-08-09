@@ -1,4 +1,4 @@
-base_model: Qwen/Qwen3-4B
+base_model: Qwen/Qwen3-4B-Thinking-2507
 # Automatically upload checkpoint and final model to HF
 # hub_model_id: username/custom_model_name
 
@@ -10,7 +10,7 @@ plugins:
   - axolotl.integrations.cut_cross_entropy.CutCrossEntropyPlugin
 
 datasets:
-  - path: data/data-v0
+  - path: Hieuman/extraction-v1
     type: chat_template
     chat_template: qwen3
     split_thinking: true
@@ -21,7 +21,7 @@ dataset_prepared_path: data/preprocessed/data-v0
 val_set_size: 0.0
 output_dir: outputs/Extractor-Qwen3-SFT/v0
 
-sequence_len: 2048
+sequence_len: 8192
 sample_packing: true
 eval_sample_packing: true
 
@@ -33,11 +33,9 @@ lora_alpha: 64
 lora_dropout: 0.05
 lora_target_linear: true
 
-wandb_project:
-wandb_entity:
-wandb_watch:
-wandb_name:
-wandb_log_model:
+wandb_project: state-aware-rag
+wandb_entity: hieuman2708
+wandb_name: Qwen3-SFT-v1
 
 gradient_accumulation_steps: 4
 micro_batch_size: 1
@@ -73,4 +71,4 @@ weight_decay: 0.0
 #   state_dict_type: FULL_STATE_DICT
 #   reshard_after_forward: true
 
-save_first_step: true  # uncomment this to validate checkpoint saving works with your config
+# save_first_step: true  # uncomment this to validate checkpoint saving works with your config

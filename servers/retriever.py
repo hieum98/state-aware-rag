@@ -3,16 +3,27 @@ import numpy as np
 import yaml
 from types import SimpleNamespace
 from argparse import ArgumentParser
-from flask import Flask, request, jsonify
 import faiss
 import datasets
 import openai
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import List, Union, Optional
+import uvicorn
+import logging
 
-app = Flask(__name__)
+app = FastAPI()
+
+class SearchRequest(BaseModel):
+    query: Union[str, List[str]]
+    top_k: int = 16
+    return_score: bool = False
+    instruction: Optional[str] = None
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
     parser = ArgumentParser(description="Retriever Server")
-    parser.add_argument("--port", type=int, default=5000, help="Port to run the Flask server on")
+    parser.add_argument("--port", type=int, default=5000, help="Port to run the server on")
     parser.add_argument("--config", type=str, required=True, help="Path to the configuration file")
     args = parser.parse_args()
 
@@ -35,8 +46,8 @@ if __name__ == "__main__":
     else:
         corpus = datasets.load_from_disk(corpus_path)
     index = faiss.read_index(index_path)
-    print(f"Loaded corpus with {len(corpus)} documents from {corpus_path}.")
-    print(f"Loaded index with {index.ntotal} vectors from {index_path}.")
+    logging.info(f"Loaded corpus with {len(corpus)} documents from {corpus_path}.")
+    logging.info(f"Loaded index with {index.ntotal} vectors from {index_path}.")
 
     encoder_model_base_url = config.encoder_model_base_url
     encoder_model_api_key = config.encoder_model_api_key
@@ -47,18 +58,18 @@ if __name__ == "__main__":
     models = encoder_model_client.models.list()
     model = models.data[0].id
 
-    @app.route('/search', methods=['POST'])
-    def search():
-        data = request.get_json()
-        query = data.get('query', None)
-        top_k = data.get('top_k', 16)
-        return_score = data.get('return_score', False)
-        instruction = data.get('instruction', default_instruction)
+    @app.post('/search')
+    def search(request: SearchRequest):
+        query = request.query
+        top_k = request.top_k
+        return_score = request.return_score
+        instruction = request.instruction
         if instruction is None:
             instruction = default_instruction
+            logging.info(f"Using default instruction: {instruction}")
         if not query:
-            print("No query provided. Returning empty results.")
-            return jsonify({"retrieved_docs": [], "scores": []} if return_score else {"retrieved_docs": []})
+            logging.warning("No query provided. Returning empty results.")
+            return {"retrieved_docs": [], "scores": []} if return_score else {"retrieved_docs": []}
         if isinstance(query, str):
             query = [query]
 
@@ -68,9 +79,10 @@ if __name__ == "__main__":
             assert '{query}' in instruction, "Instruction must contain a {query} placeholder. Falling back to raw query."
             query = [instruction.format(query=q) for q in query]
         except:
-            print("Error formatting query with instruction. Using raw query.")
+            logging.warning("Error formatting query with instruction. Using raw query.")
             query = query
         try:
+            logging.info(f"Encoding query: {query}")
             query_embeddings = encoder_model_client.embeddings.create(
                 input=query,
                 model=model
@@ -93,27 +105,14 @@ if __name__ == "__main__":
                 'scores': scores if return_score else None
             }
         except:
-            print("Error during retrieval. Check your query and index.")
-            print("Query:", query)
-            print("Index path:", index_path)
-            print("Corpus path:", corpus_path)
+            logging.error("Error during retrieval. Check your query and index.")
+            logging.error(f"Query: {query}")
+            logging.error(f"Index path: {index_path}")
+            logging.error(f"Corpus path: {corpus_path}")
             retrieved_docs = {"retrieved_docs": [], "scores": []} if return_score else {"retrieved_docs": []}
 
-        # retrieved_docs = retriever.search(query, top_k=top_k, return_score=return_score, instruction=instruction)
-        # if reranker:
-        #     reranker_top_k = data.get('reranker_top_k', top_k)
-        #     if reranker_top_k < top_k:
-        #         docs = retrieved_docs['retrieved_docs']
-        #         assert len(query) == len(docs), "Query and documents length mismatch"
-        #         reranker_instruction = data.get('reranker_instruction', None)
-        #         return_docs = []
-        #         for q, d in zip(query, docs):
-        #             reranker_docs = reranker.rerank(q, d, instruction=reranker_instruction, top_k=reranker_top_k)
-        #             return_docs.append(reranker_docs)
-        #         retrieved_docs['retrieved_docs'] = return_docs
-        return jsonify(retrieved_docs)
+        return retrieved_docs
 
-    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True)
+    uvicorn.run(app, host='0.0.0.0', port=args.port)
 
-    # The Flask app will run and listen for incoming requests on port 5000.
-    # python -m servers.retriever --config path/to/config.yaml 
+    # python -m servers.retriever --config path/to/config.yaml

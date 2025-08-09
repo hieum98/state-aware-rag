@@ -116,6 +116,7 @@ def search(
         save_dir: str = "mcts_trees",
         top_k: int = 5,
         verbose: bool = False,
+        **kwargs
     ):  
     # Initialize the MCTS searcher with the given exploration weight
     mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=False)

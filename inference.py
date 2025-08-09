@@ -1,4 +1,5 @@
 import dataclasses
+import os
 import pprint
 import datasets
 from typing import Any, Dict, List, Optional, Union
@@ -9,9 +10,10 @@ from agents.roles.evaluator import Evaluator
 from agents.roles.extractor import Extractor
 from agents.roles.generator import Generator
 from agents.retriever_agents import RetrieverAgent
-from planners.MCTS.utils import search, clear_agent_cache
+from planners.MCTS.utils import clear_agent_cache 
+import planners
 from preprocess.utils import simple_preprocess
-from args import MCTSArguments, GenerationArguments, RetrieverArguments, LLMAgentArguments
+from args import SearchArguments, GenerationArguments, RetrieverArguments, LLMAgentArguments
 
 
 def generate_answer(
@@ -23,9 +25,15 @@ def generate_answer(
         # Optional parameters
         question_id: Optional[str] = None,
         golden_answer: Optional[Union[str, List[str]]] = None,
-        config: Optional[MCTSArguments] = None
+        use_cot: bool = False,
+        use_mcts: bool = True,
+        config: Optional[SearchArguments] = None,
     ):
-    # breakpoint()
+    if use_mcts:
+        from planners.MCTS.utils import search
+    else:
+        assert use_cot, "Either MCTS or CoT must be used for inference."
+        from  planners.CoT.utils import search
     final_answer, final_reasoning, reasoning_paths = search(
         generator=generator,
         evaluator=evaluator,
@@ -37,15 +45,16 @@ def generate_answer(
         golden_answer=golden_answer,
         # MCTS parameters
         max_depth=config.max_depth if config else 5,
-        num_rollouts=config.num_rollouts if config else 10,
+        num_rollouts=config.num_rollouts if config else 1,
         top_k=config.top_k if config else 5,
         use_golden_answer=config.use_golden_answer if config else False,
         save_tree=config.save_tree if config else False,
         save_dir=config.save_dir if config else "mcts_data"
     )
+    detailed_answer = f"{final_reasoning}\n\nFinal Answer: {final_answer}" 
     return {
         "pred": final_answer,
-        "detailed_answer": final_reasoning,
+        "detailed_answer": detailed_answer,
         "all_candidates_answers": reasoning_paths,
     }
 
@@ -60,9 +69,14 @@ if __name__ == "__main__":
     parser.add_argument("--evaluator_config", type=str, default="configs/infer/evaluator_config.yaml", help="Path to evaluator configuration file.")
     parser.add_argument("--extractor_config", type=str, default="configs/infer/extractor_config.yaml", help="Path to extractor configuration file.")
     parser.add_argument("--retriever_config", type=str, default="configs/infer/retriever_config.yaml", help="Path to retriever configuration file.")
-    parser.add_argument("--mcts_config", type=str, default="configs/infer/MCTS_config.yaml", help="Path to MCTS configuration file.")
+    parser.add_argument("--search_config", type=str, default=None, help="Path to search configuration file.")
+    parser.add_argument("--use_cot", action="store_true", help="Whether to use CoT for inference.")
+    parser.add_argument("--use_mcts", action="store_true", help="Whether to use MCTS for inference.")
+    parser.add_argument("--extractor_server_url", type=str, default=None, help="Optional extractor server address.")
+    parser.add_argument("--extractor_model_name", type=str, default=None, help="Optional extractor model name.")
     parser.add_argument("--results_dir", type=str, default="results/mcts", help="Directory to save results.")
     parser.add_argument("--num_proc", type=int, default=64, help="Number of processes to use for parallel processing.")
+    parser.add_argument("--n_rollouts", type=int, default=None, help="Number of rollouts")
 
     args = parser.parse_args()
     assert args.question is not None or args.data_name is not None, "Either question or data_name must be provided."
@@ -70,12 +84,32 @@ if __name__ == "__main__":
     llm_args, generation_args = generator_hf_parser.parse_yaml_file(args.generator_config)
     extractor_hf_parser = HfArgumentParser((LLMAgentArguments, GenerationArguments))
     extractor_llm_args, extractor_generation_args = extractor_hf_parser.parse_yaml_file(args.extractor_config)
+    if args.extractor_server_url:
+        extractor_llm_args.url = args.extractor_server_url
+    if args.extractor_model_name:
+        extractor_llm_args.model_name = args.extractor_model_name
     evaluator_hf_parser = HfArgumentParser((LLMAgentArguments, GenerationArguments))
     evaluator_llm_args, evaluator_generation_args = evaluator_hf_parser.parse_yaml_file(args.evaluator_config)
     retriever_hf_parser = HfArgumentParser(RetrieverArguments)
     retriever_args = retriever_hf_parser.parse_yaml_file(args.retriever_config)[0]
-    mcts_hf_parser = HfArgumentParser(MCTSArguments)
-    mcts_args = mcts_hf_parser.parse_yaml_file(args.mcts_config)[0]
+    search_hf_parser = HfArgumentParser(SearchArguments)
+    if args.use_mcts:
+        search_args = search_hf_parser.parse_yaml_file(args.search_config)[0]
+        if args.n_rollouts is not None:
+            search_args.num_rollouts = args.n_rollouts
+        use_cot = False
+        use_mcts = True
+        results_dir = os.path.join(args.results_dir, 'mcts')
+    else:
+        search_args = search_hf_parser.parse_yaml_file(args.search_config)[0]
+        use_cot = True
+        use_mcts = False
+        results_dir = os.path.join(args.results_dir, 'cot')
+    search_args.save_dir = os.path.join(results_dir, 'result_trees')
+    # Ensure the directory exists
+    os.makedirs(search_args.save_dir, exist_ok=True)
+    if args.n_rollouts is not None:
+        search_args.num_rollouts = args.n_rollouts
 
     # Print the configurations
     print("Generator Config:")
@@ -89,8 +123,12 @@ if __name__ == "__main__":
     pprint.pprint(evaluator_generation_args)
     print("Retriever Config:")
     pprint.pprint(retriever_args)
-    print("MCTS Config:")
-    pprint.pprint(mcts_args)
+    print("Search Config:")
+    if use_mcts:
+        print("Using MCTS for inference.")
+    else:
+        print("Using CoT for inference.")
+    pprint.pprint(search_args)
 
     # Initialize the generator, evaluator, extractor, and retriever agents
     generator = Generator(
@@ -119,6 +157,10 @@ if __name__ == "__main__":
             dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', '2wikimultihopqa', split='dev')
             # Randomly select 1000 samples from the dataset for testing
             dataset = dataset.shuffle(seed=42).select(range(1000))
+        elif args.data_name == '2wiki-eval':
+            dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', '2wikimultihopqa', split='dev')
+            # Randomly select 100 samples from the dataset for evaluation
+            dataset = dataset.shuffle(seed=42).select(range(100))
         elif args.data_name == 'hotpotqa':
             dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', 'hotpotqa', split='dev')
             # Randomly select 1000 samples from the dataset for testing
@@ -210,12 +252,14 @@ if __name__ == "__main__":
             retriever=retriever,
             question_id=f"{args.data_name}_{x['id']}",
             golden_answer=x['golden_answers'],
-            config=mcts_args
+            config=search_args,
+            use_cot=use_cot,
+            use_mcts=use_mcts
             ), num_proc=args.num_proc)
-        dataset.save_to_disk(f"{args.results_dir}")
+        dataset.save_to_disk(f"{results_dir}")
+        print(f"Results saved to {results_dir}")
     
     # clear_agent_cache(generator, extractor, evaluator)
-    breakpoint()
 
 
 

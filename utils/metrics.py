@@ -2,6 +2,7 @@
 
 
 import re
+import shutil
 from typing import Literal, Optional
 import datasets
 import numpy as np
@@ -571,6 +572,9 @@ class LLMJudge(BaseMetric):
 
         score_with_golden = sum(metric_with_golden) / len(metric_with_golden)
         score_without_golden = sum(metric_without_golden) / len(metric_without_golden)
+
+        cache_dir = self.llm_pipeline.cache_dir
+        shutil.rmtree(cache_dir, ignore_errors=True)
         return {
             "llm_judge_with_golden": score_with_golden,
             "llm_judge_without_golden": score_without_golden

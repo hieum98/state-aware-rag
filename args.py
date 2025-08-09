@@ -83,7 +83,7 @@ class RetrieverArguments:
 
 
 @dataclass
-class MCTSArguments:
+class SearchArguments:
     max_depth: int = field(
         default=15,
         metadata={"help": "Maximum depth for MCTS search."}

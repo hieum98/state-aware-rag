@@ -199,16 +199,16 @@ class APIRetrieverAgent:
             top_k = self.retrieval_topk
         if instruction is None:
             instruction = self.query_instruction
-        data = json.dumps({
+        data = {
             "query": query,
             "top_k": top_k,
             "return_score": return_score,
             "instruction": instruction,
             # "reranker_top_k": reranker_top_k if reranker_top_k is not None else 5,
             # "reranker_instruction": reranker_instruction
-        })
+        }
         begin_time = time.time()
-        response = requests.post(self.url, headers=self.headers, data=data)
+        response = requests.post(self.url, headers=self.headers, json=data)
         end_time = time.time()
         if response.status_code != 200:
             raise Exception(f"Error: {response.status_code} - {response.text}")
@@ -249,7 +249,7 @@ class RetrieverAgent:
 
 if __name__ == "__main__":
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-225-181:5000/search",
+        "url": "http://ip-10-4-225-181:12345/search",
         "retrieval_topk": 64,
         "query_instruction": None,
     }

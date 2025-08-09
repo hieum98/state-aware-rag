@@ -508,7 +508,7 @@ class ReasoningNode(Node, NodeMixin):
             return False
         same_hash = hash(self) == hash(other)
         same_type = self.node_type == other.node_type
-        same_depth = self.tree_depth == other.depth
+        same_depth = self.tree_depth == other.tree_depth
         return same_hash and same_type and same_depth
     
     def __str__(self):

@@ -41,6 +41,7 @@ class ModelClient:
         self.max_tokens = generate_kwargs.get('max_tokens', 8192) # default max tokens to generate
         self.top_k = generate_kwargs.get('top_k', 20)
         self.reasoning_effort = generate_kwargs.get('reasoning_effort', None)
+        self.random_seed = generate_kwargs.get('random_seed', None)
         self.structure_output_supported = False
     
     def prepare_model_kwargs(self, **kwargs):
@@ -174,6 +175,7 @@ class LiteLLMClient(ModelClient):
             "response_format": output_schema,
             'reasoning_effort': reasoning_effort,
             'aws_profile_name': kwargs.get('aws_profile_name', self.aws_profile_name),
+            'seed': kwargs.get('random_seed', self.random_seed),
         }
         return model_kwargs
     
@@ -220,6 +222,7 @@ class OpenAIClient(ModelClient):
             'max_tokens': kwargs.get('max_tokens', self.max_tokens),
             'top_p': kwargs.get('top_p', self.top_p),
             'n': kwargs.get('n', self.num_samples),
+            'seed': kwargs.get('random_seed', self.random_seed),
             'response_format': response_format,
             'extra_body': {
                 "top_k": kwargs.get('top_k', self.top_k),

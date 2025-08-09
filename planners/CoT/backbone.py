@@ -34,22 +34,21 @@ class Node(ABC):
         pass
 
 
-class CoT:
-    def do_rollout(self, node: Node):
-        """
-        Perform a rollout from the given node.
-        """
-        path = []
-        current_node = node
-        while True:
-            if current_node.is_terminal():
-                return path
-            children = current_node.find_children()
-            if all([child.is_valid_leaf() for child in children]):
-                current_node = random.choice(list(children))
-            else:
-                assert len(children) == 1, "Expected exactly one child node if children are not valid leaves, getting: {} childrens".format(len(children))
-                current_node = children[0]
-            path.append(current_node)
+def do_rollout(node: Node):
+    """
+    Perform a rollout from the given node.
+    """
+    path = []
+    current_node = node
+    while True:
+        if current_node.is_terminal():
+            return path
+        children = current_node.find_children()
+        if all([child.is_valid_leaf() for child in children]):
+            current_node = random.choice(list(children))
+        else:
+            assert len(children) == 1, "Expected exactly one child node if children are not valid leaves, getting: {} children".format(len(children))
+            current_node = children[0]
+        path.append(current_node)
                 
         

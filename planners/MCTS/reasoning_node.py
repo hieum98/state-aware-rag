@@ -3,7 +3,7 @@ import copy
 import json
 from enum import Enum, unique
 from hashlib import sha256
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import tqdm
 import pprint
 from anytree import NodeMixin
@@ -92,46 +92,30 @@ class ReasoningNode(Node, NodeMixin):
         # Node content
         self.state = {
             "user_question": None,  # The main user question for USER_QUESTION nodes
-            # The content of the intermediate and the final nodes
-            # Which can be final answer for FINAL_ANSWER nodes,
-            # subquestion and subanswer for SUBQUESTION nodes and SELF_CORRECTED_NODE nodes,
-            # rephased question for REPHASE_QUESTION nodes,
-            # synthesized reasoning for SYNTHESIS nodes,
             "node_content": None,  
             "confidence": None,  # The confidence of the node content
         }
         self.memory = memory
         # Initialize the node content based on the node type
         if node_type == NodeType.USER_QUESTION:
-            assert user_question is not None, "User question must be provided for USER_QUESTION nodes."
             self.state['user_question'] = user_question
             self.state['node_content'] = user_question  # The content of the node is the user question
         elif node_type == NodeType.FINAL_ANSWER:
-            assert answer is not None, "Answer must be provided for FINAL_ANSWER nodes."
             self.state['node_content'] = answer
             self.state['detailed_answer'] = reasoning if reasoning is not None else ""  # Optional reasoning for FINAL_ANSWER nodes
             self.state['confidence'] = confidence if confidence is not None else 1.0  # Default confidence is 1.0 if not provided
         elif node_type == NodeType.SUB_QA_NODE:
-            assert question is not None, "Question must be provided for SUBQUESTION nodes."
-            assert answer is not None, "Answer must be provided for SUBQUESTION nodes."
             self.state['sub_question'] = question  # Store the sub-question
             self.state['sub_answer'] = answer  # Store the sub-answer
             self.state['node_content'] = f"{question}\n{answer}"  # Combine question and answer for SUBQUESTION nodes
             self.state['confidence'] = confidence if confidence is not None else 1.0
         elif node_type == NodeType.REPHASED_QUESTION_NODE:
-            assert self.parent.node_type in [NodeType.USER_QUESTION, NodeType.SUB_QA_NODE], "REPHASE_QUESTION nodes can only be generated from USER_QUESTION or SUB_QA_NODE nodes."
-            assert question is not None, "Question must be provided for REPHASE_QUESTION nodes."
             self.state['node_content'] = question
             self.state['confidence'] = 1.0 # Default confidence is 1.0 for REPHASE_QUESTION nodes
         elif node_type == NodeType.SELF_CORRECTED_NODE:
-            assert question is not None, "Question must be provided for SELF_CORRECTED_NODE nodes."
-            assert answer is not None, "Answer must be provided for SELF_CORRECTED_NODE nodes."
-            assert self.parent.node_type == NodeType.SUB_QA_NODE, "SELF_CORRECTED_NODE can only be generated from SUB_QA_NODE nodes."
             self.state['node_content'] = f"{question}\n{answer}"
             self.state['confidence'] = confidence if confidence is not None else 1.0
         elif node_type == NodeType.SYNTHESIS_NODE:
-            assert reasoning is not None, "Reasoning must be provided for SYNTHESIS nodes."
-            assert self.parent.node_type in [NodeType.SUB_QA_NODE, NodeType.SELF_CORRECTED_NODE], "SYNTHESIS_NODE can only be generated from SUB_QA_NODE or SELF_CORRECTED_NODE nodes."
             self.state['node_content'] = reasoning
             self.state['confidence'] = confidence if confidence is not None else 1.0
         else:
@@ -664,10 +648,12 @@ class ReasoningNode(Node, NodeMixin):
             explored_information += external_information
             children = final_answer_nodes
         elif self.node_type == NodeType.USER_QUESTION:
+            final_answer_nodes, external_information = self.generate_final_answer_node()
+            explored_information += external_information
             sub_qa_nodes, external_information = self.generate_subQA_node()
             explored_information += external_information
             rephrase_nodes = self.generate_rephrase_question_node()
-            children = sub_qa_nodes + rephrase_nodes
+            children = sub_qa_nodes + rephrase_nodes + final_answer_nodes
         elif self.node_type == NodeType.FINAL_ANSWER:
             # If the node is a final answer node, it has no children
             raise ValueError("Final answer nodes cannot have children.")
@@ -711,14 +697,14 @@ class ReasoningNode(Node, NodeMixin):
         intermediate_conclusions = list(set(intermediate_conclusions))  # Remove duplicates
         intermediate_conclusions.sort()
         new_memory = self.update_memory(intermediate_conclusions=intermediate_conclusions, step_explored_information=explored_information)
-        assert len(children) > 0, f"No children generated for node type: {self.print_node()}"
+        # assert len(children) > 0, f"No children generated for node: {self.print_node()}"
         return children, new_memory
     
     def find_children(self, rollout_id: Optional[int] = None):
         if self.children:
             return self.children
-        children, new_memory = self.generate_children()
-        self.children = children
+        _, new_memory = self.generate_children()
+        # self.children = children
         for child in self.children:
             child.set_memory(new_memory)
             child.set_rollout_id(rollout_id)

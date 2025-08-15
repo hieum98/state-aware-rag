@@ -52,6 +52,9 @@ def do_rollout(node: Node):
         else:
             assert len(children) == 1, "Expected exactly one child node if children are not valid leaves, getting: {} children".format(len(children))
             current_node = children[0]
+        if current_node is None:
+            print("Current node is None, returning path")
+            return path
         path.append(current_node)
                 
         

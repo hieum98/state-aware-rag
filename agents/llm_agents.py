@@ -61,58 +61,48 @@ class ModelClient:
                 print(f"Model {self.model_name} does not support structured output. Ignoring output schema.")
         model_kwargs = self.prepare_model_kwargs(**kwargs)
         n = model_kwargs.get('n', 1)
-        i = 0
-        # Retry logic for handling till the response is valid
+        # Bounded retries to avoid infinite loops when model returns empty/invalid choices
         valid_choices = []
-        while True:
-            if len(valid_choices) >= n:
-                break
+        attempts = 0
+        max_attempts = 10
+        while len(valid_choices) < n and attempts < max_attempts:
             try:
                 response = self.completion(messages=messages, **model_kwargs)
             except Exception as e:
                 print(f"Error during completion: {e}. Retrying...")
                 print(f"Messages: {messages}")
-                response = None  # Reset response to None to trigger retry
-                # Wait for a short duration before retrying
-                time.sleep(5)
-            # If the response is None or any choice is None or empty, retry
-            if response is None:
+                response = None
+                time.sleep(2)
+            if response is None or not hasattr(response, 'choices') or not response.choices:
+                attempts += 1
+                # slightly adjust params to shake the sampler
+                model_kwargs['top_k'] = model_kwargs.get('top_k', 20) + 2 # Increase top_k to encourage more diverse sampling
+                model_kwargs['top_p'] = max(model_kwargs.get('top_p', 0.8) + 0.02, 1.0)
+                if 'claude' not in self.model_name and self.reasoning_effort is None:
+                    model_kwargs['temperature'] = min(1.2, model_kwargs.get('temperature', 0.7) + 0.1) # Increase temperature to encourage more diverse sampling
                 continue
-            if not hasattr(response, 'choices') or not response.choices:
-                continue
-            # remove empty choices
-            _valid_choices = [choice for choice in response.choices if isinstance(choice.message.content, str) and choice.message.content.strip() != '']
+            # collect non-empty choices
+            _valid_choices = [c for c in response.choices if isinstance(getattr(c.message, 'content', ''), str) and c.message.content.strip()]
             valid_choices.extend(_valid_choices)
-            i += 1
-            # Sleep for a short duration to avoid overwhelming the API
-            time.sleep(1)
-            model_kwargs['max_tokens'] = model_kwargs.get('max_tokens', 8192) + 1000  # Increase max tokens for the next attempt
-            model_kwargs['n'] = model_kwargs.get('n', 1) + 1  # Increase the number of samples for the next attempt
-            if not 'claude' in self.model_name and self.reasoning_effort is None:
-                model_kwargs['temperature'] = model_kwargs.get('temperature', 0.7) + 0.1  # Increase temperature for the next attempt
-            if i > 10:  # Retry limit
-                print("Retry limit reached. Returning the valid choices found so far.")
-                print(f"Messages: {messages}")
-                print(f"Response: {response}")
+            attempts += 1
+            time.sleep(0.5)
+        # If still nothing valid, return empty result for this item
         if len(valid_choices) == 0:
-            return index, [None]
-        valid_choices = valid_choices[:n]  # Limit to n valid choices
+            return index, []
+        valid_choices = valid_choices[:n]
         all_outputs = []
         for choice in valid_choices:
             reasoning = None
             if should_return_reasoning:
                 try:
                     reasoning = choice.message.reasoning_content # type: ignore
-                except:
-                    print("No reasoning content found in the response. Returning None.")
-            if output_schema is not None:
+                except Exception:
+                    reasoning = None
+            if output_schema is not None and self.structure_output_supported:
                 try:
                     output = output_schema.model_validate_json(choice.message.content) # type: ignore
                     is_valid = True
-                except:
-                    # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
-                    # print(f"Output schema: {choice.message.content}")
-                    # print(f"Raw content: {choice.message.content}") # type: ignore
+                except Exception:
                     output = choice.message.content # type: ignore
                     is_valid = False
             else:
@@ -127,14 +117,16 @@ class ModelClient:
     
     def batch_generate(self, batch_messages: List[List[Dict[str, str]]], **kwargs):
         batch = [(messages, i) for i, messages in enumerate(batch_messages)]
+        if not batch:
+            return []
         num_workers = min(self.concurrency, len(batch))
         generate_fn = partial(self.generate, **kwargs)
         with ThreadPool(max_workers=num_workers) as pool:
             future = pool.map(generate_fn, batch)
             outputs = list(future.result())
-        assert len(outputs) == len(batch), "Batch generation did not return the expected number of outputs."
-        outputs = sorted(outputs, key=lambda x: x[0])  # Sort by index
-        return [output[1] for output in outputs]  # Return only the outputs
+        # outputs: List[Tuple[index, List[Dict] | []]]
+        outputs = sorted(outputs, key=lambda x: x[0])
+        return [output[1] for output in outputs]
 
 class LiteLLMClient(ModelClient):
     def __init__(
@@ -264,6 +256,8 @@ class LLMAgent:
         # print(f"Saving responses to cache file: {cache_file}")
         to_save_data = []
         for item in responses:
+            if not item or not isinstance(item, dict):
+                continue
             if not item['is_valid']:
                 continue  # Skip invalid responses
             if isinstance(item['output'], pydantic.BaseModel):
@@ -293,13 +287,10 @@ class LLMAgent:
                     for item in data:
                         try:
                             item['output'] = output_schema.model_validate(item['output'])
-                        except:
-                            # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
-                            # print(f"Raw content: {item['output']}")
+                        except Exception:
                             pass
-        except:
+        except Exception:
             raise "[Warning] Error loading cache file {}".format(cache_file)
-        # print(f"Loaded responses from cache file: {cache_file}")
         return data
     
     def generate(self, input_args, **kwargs):
@@ -318,9 +309,10 @@ class LLMAgent:
         try:
             response = self.load_from_cache(cache_file, output_schema)
             return index, response
-        except:
+        except Exception:
             index, response = self.client.generate(input_args, **kwargs)
-            self.save_to_cache(cache_file, response, input=messages, any_other_info=any_other_info)
+            if isinstance(response, list) and response:
+                self.save_to_cache(cache_file, response, input=messages, any_other_info=any_other_info)
             return index, response
         
     def batch_generate(self, batch_messages: List[List[Dict[str, str]]], **kwargs):
@@ -344,7 +336,7 @@ class LLMAgent:
                 output_schema = kwargs.get('output_schema', None)
                 response = self.load_from_cache(cache_file, output_schema)
                 cached_responses.append((i, response))
-            except:
+            except Exception:
                 to_compute_responses.append((messages, i, cache_file))
         if to_compute_responses:
             messages = [item[0] for item in to_compute_responses]
@@ -353,7 +345,8 @@ class LLMAgent:
             responses = self.client.batch_generate(messages, **kwargs)
             for i, response, cache_file, m in zip(index, responses, cache_files, messages):
                 additional_info = any_other_info[i] if any_other_info is not None else None
-                self.save_to_cache(cache_file, response, m, any_other_info=additional_info)
+                if isinstance(response, list) and response:
+                    self.save_to_cache(cache_file, response, m, any_other_info=additional_info)
                 cached_responses.append((i, response))
         cached_responses = sorted(cached_responses, key=lambda x: x[0])
         assert len(cached_responses) == len(batch_messages), "Batch generation did not return the expected number of outputs."
@@ -378,7 +371,12 @@ class LLMAgent:
         batch_results = []
         for i, response in enumerate(responses):
             results = []
+            if not response:
+                batch_results.append(results)
+                continue
             for item in response:
+                if not item or not isinstance(item, dict):
+                    continue
                 if self.verbose:
                     print(f"Processing response {i}: {item}")
                 output_object = item.get('output', None)
@@ -389,8 +387,7 @@ class LLMAgent:
                         keys = output_schema.model_fields.keys()
                         value_types = [field.annotation.__name__ for field in output_schema.model_fields.values()]
                         extracted_info = extract_info_from_text(output_object, keys, value_types)
-                    except:
-                        # print(f"Failed to parse output with schema {output_schema}. Returning raw content.")
+                    except Exception:
                         extracted_info = {'output': output_object}
                 if 'confidence' in extracted_info:
                     extracted_info['confidence'] = convert_confidence_to_score(extracted_info['confidence'])
@@ -398,7 +395,7 @@ class LLMAgent:
             batch_results.append(results)
         if len(batch_results) == 1:
             return batch_results[0]
-        return [x[0] for x in batch_results]  # Return the first result of each batch due to n=1
+        return [x[0] for x in batch_results]  # Return the first result of each batch due to n always being 1 when batch_size > 1
             
 
 if __name__ == "__main__":

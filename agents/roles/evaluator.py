@@ -292,16 +292,6 @@ class Evaluator(LLMAgent):
         response = self.role_execute(batch, **kwargs)
         results = []
         for res in response:
-            step_quality = res.get('step_quality', 'poor')
-            step_quality = step_quality.lower() if isinstance(step_quality, str) else 'poor'
-            if step_quality == 'excellent':
-                step_quality = 1.0
-            elif step_quality == 'good':
-                step_quality = 0.75
-            elif step_quality == 'fair':
-                step_quality = 0.5
-            else:
-                step_quality = 0.1
             overall_quality = res.get('overall_quality', 'poor')
             overall_quality = overall_quality.lower() if isinstance(overall_quality, str) else 'poor'
             if overall_quality == 'excellent':
@@ -322,7 +312,7 @@ class Evaluator(LLMAgent):
                 conclusion_quality = 0.5
             else:
                 conclusion_quality = 0.1
-            score = (step_quality + overall_quality + conclusion_quality) / 3.0
+            score = (overall_quality + conclusion_quality) / 2.0
             results.append(score)
         if len(main_question) == 1 and len(results) > 1:
             # Majority vote

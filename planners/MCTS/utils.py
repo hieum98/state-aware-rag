@@ -1,3 +1,4 @@
+from collections import defaultdict
 import copy
 import json
 import os
@@ -74,30 +75,114 @@ def find_valid_solution_nodes(node: ReasoningNode) -> list[ReasoningNode]:
     return valid_nodes
 
 
-def find_best_solution(root_node: ReasoningNode, verbose: bool = True):
-    """
-    Find the best solution node in the reasoning tree.
-    The best solution node is the one with the highest score.
-    """
-    solution_nodes = find_valid_solution_nodes(root_node)
-    if len(solution_nodes) == 0:
-        return None, None
-    
-    scores = []
-    highest_score = float('-inf')
-    best_solution = None
-    for node in solution_nodes:
-        score = node.reward()
-        node_data = node.get_node()
-        node_data['reward'] = score
-        if score >= highest_score:
-            highest_score = score
-            best_solution = node_data
-        scores.append(score)
-    return best_solution, scores, solution_nodes
+def get_tree_from_file(
+        save_path: str,
+        generator: Generator,
+        evaluator: Evaluator,
+        extractor: Extractor,
+        retriever: RetrieverAgent,
+        user_question: Optional[str] = None,
+        question_id: Optional[str] = None,
+        max_depth: int = 15,
+        golden_answer: Optional[Union[str, List[str]]] = None,
+        use_golden_answer: bool = False,
+        top_k: int = 5,
+        verbose: bool = False,
+        **kwargs
+    ):
+    # Start the search from the root node
+    root_node = ReasoningNode(
+        parent=None,
+        node_type=NodeType.USER_QUESTION,
+        depth=0,
+        # Components
+        generator=generator,
+        evaluator=evaluator,
+        extractor=extractor,
+        retriever=retriever,
+        # Optional parameters
+        max_depth=max_depth,
+        golden_answer=golden_answer if use_golden_answer else None,
+        user_question=user_question,
+        question_id=question_id,
+        top_k=top_k,  # Set the top_k for the retriever
+        verbose=False,
+    )
+    all_nodes = {}
+    with open(save_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            node_data = json.loads(line.strip())
+            node_config = {
+                "verbose": verbose,  # Whether to print verbose output
+                "max_depth": max_depth,  # Maximum depth of the reasoning tree
+                "golden_answer": golden_answer,  # The golden answer for the user question, if available
+                "user_question": user_question,  # The main user question for USER_QUESTION nodes
+                "question_id": question_id,  # The ID of the question, if available
+                "generator": generator,  # The generator component for the node
+                "evaluator": evaluator,  # The evaluator component for the node
+                "extractor": extractor,  # The extractor component for the node
+                "retriever": retriever,  # The retriever component for the node
+                "top_k": top_k,  # The number of top-k results to retrieve from the retriever
+            }
+            node_type = NodeType(node_data['node_type'])
+            node_content = {}
+            if node_type is NodeType.USER_QUESTION:
+                node_content = {}
+            elif node_type is NodeType.FINAL_ANSWER:
+                node_content = {
+                    'answer': node_data['node_content'],
+                    'reasoning': node_data['detailed_answer']
+                }
+            elif node_type is NodeType.SUB_QA_NODE:
+                node_content = {
+                    'question': node_data['sub_question'],
+                    'answer': node_data['sub_answer'],
+                }
+            elif node_type is NodeType.REPHASED_QUESTION_NODE:
+                node_content = {
+                    'question': node_data['node_content'],
+                }
+            elif node_type is NodeType.SELF_CORRECTED_NODE:
+                node_content = {
+                    'question': node_data['node_content'],
+                    'answer': ""
+                }
+            elif node_type is NodeType.SYNTHESIS_NODE:
+                node_content = {
+                    'reasoning': node_data['node_content'],
+                }
+            else:
+                raise ValueError(f"Unknown node type: {node_type}")                
+            node = ReasoningNode(
+                parent=None, # Temporarily set to None, will be updated later
+                node_type=NodeType(node_data['node_type']),
+                depth=node_data['depth'],
+                confidence=node_data['confidence'],
+                memory=node_data['memory'],
+                **node_config,
+                **node_content
+            )
+            node.set_rollout_id(node_data['rollout_id'])
+            node_parent = node_data['parent']
+            node_hash = node_data['hash']
+            if node_parent is None:
+                node = root_node
+            all_nodes[node_hash] = [node, node_parent]
+    # Rebuild the tree from the saved nodes
+    for node_hash, (node, parent_hash) in all_nodes.items():
+        if parent_hash is None:
+            # If the parent is None, it means this is the root node
+            continue
+        parent_node = all_nodes[parent_hash][0]
+        node.parent = parent_node
+    if verbose:
+        print(f"Loaded MCTS tree from {save_path} with {len(all_nodes)} nodes.")
+        print_tree_from_root(root_node)
+    return root_node
 
 
-def search(
+def search_with_mcts(
         # Root node components
         generator: Generator,
         evaluator: Evaluator,
@@ -121,17 +206,6 @@ def search(
     # Initialize the MCTS searcher with the given exploration weight
     mcts_searcher = MCTS(exploration_weight=exploration_weight, verbose=False)
 
-    # Normalize the user question and golden answer if provided
-    if user_question is not None:
-        user_question = simple_preprocess(user_question)
-    if golden_answer is not None:
-        if isinstance(golden_answer, str):
-            golden_answer = [simple_preprocess(golden_answer)]
-        elif isinstance(golden_answer, list):
-            golden_answer = [simple_preprocess(ans) for ans in golden_answer]
-        else:
-            raise ValueError("golden_answer must be a string or a list of strings.")
-
     # Start the search from the root node
     root_node = ReasoningNode(
         parent=None,
@@ -153,14 +227,98 @@ def search(
     for i in range(num_rollouts):
         simulated_node = mcts_searcher.do_rollout(root_node, rollout_id=i)
         if verbose:
+            print(f"Rollout {i+1}/{num_rollouts} completed")
             print_tree_from_root(root_node)
-        best_solution, scores, solution_nodes = find_best_solution(root_node, verbose=verbose)
+    
+    if save_tree:
+        # check if the save directory does not exist, create it
+        nodes = []
+        for _, _, node in RenderTree(root_node):
+            nodes.append(node)
+        os.makedirs(save_dir, exist_ok=True)
+        with open(f"{save_dir}/mcts_tree_{question_id}.jsonl", 'w') as f:
+            for node in nodes:
+                node_content = node.get_node()
+                node_content['reward'] = mcts_searcher.Q[node]
+                node_content['visits'] = mcts_searcher.N[node]
+                f.write(json.dumps(node_content) + "\n")
+    return root_node
+
+
+def search(
+       # Root node components
+        generator: Generator,
+        evaluator: Evaluator,
+        extractor: Extractor,
+        retriever: RetrieverAgent,
+        # Question components
+        user_question: Optional[str] = None,
+        question_id: Optional[str] = None,
+        max_depth: int = 15,
+        golden_answer: Optional[Union[str, List[str]]] = None,
+        # MCTS parameters
+        exploration_weight: float = 1.0,
+        num_rollouts: int = 16,
+        use_golden_answer: bool = False,
+        save_tree: bool = False,
+        save_dir: str = "mcts_trees",
+        top_k: int = 5,
+        verbose: bool = False,
+        **kwargs
+    ):
+
+    # Normalize the user question and golden answer if provided
+    if user_question is not None:
+        user_question = simple_preprocess(user_question)
+    if golden_answer is not None:
+        if isinstance(golden_answer, str):
+            golden_answer = [simple_preprocess(golden_answer)]
+        elif isinstance(golden_answer, list):
+            golden_answer = [simple_preprocess(ans) for ans in golden_answer]
+        else:
+            raise ValueError("golden_answer must be a string or a list of strings.")
+        
+    save_path = f"{save_dir}/mcts_tree_{question_id}.jsonl" if save_tree else None
+    if os.path.exists(save_path) and save_tree:
+        # If the file already exists, load the tree from the file
         if verbose:
-            print("**" * 20)
-            print(f"Rollout {i+1}/{num_rollouts}")
-            if best_solution is not None:
-                print("Best solution found:")
-                pprint.pprint(best_solution, indent=4, width=120)
+            print(f"Loading existing MCTS tree from {save_path}")
+        root_node = get_tree_from_file(
+            save_path=save_path,
+            generator=generator,
+            evaluator=evaluator,
+            extractor=extractor,
+            retriever=retriever,
+            user_question=user_question,
+            question_id=question_id,
+            max_depth=max_depth,
+            golden_answer=golden_answer,
+            use_golden_answer=use_golden_answer,
+            top_k=top_k,
+            verbose=verbose
+        )
+    else:
+        # If the file does not exist, perform a new search
+        if verbose:
+            print(f"Performing new MCTS search for question: {user_question} with ID: {question_id}")
+        root_node = search_with_mcts(
+            generator=generator,
+            evaluator=evaluator,
+            extractor=extractor,
+            retriever=retriever,
+            user_question=user_question,
+            question_id=question_id,
+            max_depth=max_depth,
+            golden_answer=golden_answer,
+            exploration_weight=exploration_weight,
+            num_rollouts=num_rollouts,
+            use_golden_answer=use_golden_answer,
+            save_tree=save_tree,
+            save_dir=save_dir,
+            top_k=top_k,
+            verbose=verbose
+        )
+
     nodes = []
     solutions = []
     answers = []
@@ -205,16 +363,6 @@ def search(
     except Exception as e:
         final_answer = evaluator.majority_vote(question=user_question, answers=answers)
         final_reasoning = final_answer  # Fallback to the final answer as reasoning if synthesis fails
-    
-    if save_tree:
-        # check if the save directory does not exist, create it
-        os.makedirs(save_dir, exist_ok=True)
-        with open(f"{save_dir}/mcts_tree_ {question_id}.jsonl", 'w') as f:
-            for node in nodes:
-                node_content = node.get_node()
-                node_content['reward'] = mcts_searcher.Q[node]
-                node_content['visits'] = mcts_searcher.N[node]
-                f.write(json.dumps(node_content) + "\n")
     return final_answer, final_reasoning, reasoning_paths
 
 
@@ -235,7 +383,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://ip-10-4-225-181:30000/v1', 
+        'url': 'http://ip-10-4-226-205:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -319,12 +467,12 @@ if __name__ == "__main__":
     )
 
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-225-181:5000/search",
+        "url": "http://ip-10-4-226-205:5000/search",
         "retrieval_topk": 64,
     }
     retriever = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    question = "Where was the director of film Breakup Buddies born?"
+    question = " Which magazine was started first Arthur's Magazine or First for Women?"
 
     final_answer, final_reasoning, reasoning_paths = search(
         generator=generator,
@@ -334,10 +482,10 @@ if __name__ == "__main__":
         # Question components
         user_question=question,
         question_id="example_question_1",
-        max_depth=6,
-        golden_answer="Taiyuan",
+        max_depth=3,
+        golden_answer="Arthur's Magazine",
         # MCTS parameters
-        num_rollouts=10,
+        num_rollouts=3,
         use_golden_answer=True,
         save_tree=True,
         save_dir="mcts_data",

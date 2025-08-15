@@ -5,6 +5,7 @@ import datasets
 from typing import Any, Dict, List, Optional, Union
 from argparse import ArgumentParser
 from transformers import HfArgumentParser
+from types import SimpleNamespace
 
 from agents.roles.evaluator import Evaluator
 from agents.roles.extractor import Extractor
@@ -14,6 +15,75 @@ from planners.MCTS.utils import clear_agent_cache
 import planners
 from preprocess.utils import simple_preprocess
 from args import SearchArguments, GenerationArguments, RetrieverArguments, LLMAgentArguments
+
+# Per-process lazy state for workers
+_WORKER_STATE = {
+    "initialized": False,
+    "generator": None,
+    "evaluator": None,
+    "extractor": None,
+    "retriever": None,
+    "search_config": None,
+}
+
+
+def _build_process_fn(
+    gen_client_kwargs: Dict[str, Any],
+    gen_generate_kwargs: Dict[str, Any],
+    eval_client_kwargs: Dict[str, Any],
+    eval_generate_kwargs: Dict[str, Any],
+    ext_client_kwargs: Dict[str, Any],
+    ext_generate_kwargs: Dict[str, Any],
+    retriever_kwargs: Dict[str, Any],
+    search_config_dict: Dict[str, Any],
+    use_cot: bool,
+    use_mcts: bool,
+    data_name: Optional[str],
+):
+    """Return a worker-safe map function that lazily initializes agents once per process."""
+
+    def _ensure_workers_initialized():
+        if not _WORKER_STATE["initialized"]:
+            _WORKER_STATE["generator"] = Generator(
+                client_kwargs=gen_client_kwargs,
+                generate_kwargs=gen_generate_kwargs,
+                use_cache=gen_generate_kwargs.get("use_cache", False),
+                cache_dir=gen_generate_kwargs.get("cache_dir"),
+            )
+            _WORKER_STATE["evaluator"] = Evaluator(
+                client_kwargs=eval_client_kwargs,
+                generate_kwargs=eval_generate_kwargs,
+                use_cache=eval_generate_kwargs.get("use_cache", False),
+                cache_dir=eval_generate_kwargs.get("cache_dir"),
+            )
+            _WORKER_STATE["extractor"] = Extractor(
+                client_kwargs=ext_client_kwargs,
+                generate_kwargs=ext_generate_kwargs,
+                use_cache=ext_generate_kwargs.get("use_cache", False),
+                cache_dir=ext_generate_kwargs.get("cache_dir"),
+            )
+            _WORKER_STATE["retriever"] = RetrieverAgent(online_kwargs=retriever_kwargs)
+            # SimpleNamespace to mimic attribute access in SearchArguments
+            _WORKER_STATE["search_config"] = SimpleNamespace(**search_config_dict)
+            _WORKER_STATE["initialized"] = True
+
+    def process_example(example: Dict[str, Any], idx: int):
+        _ensure_workers_initialized()
+        res = generate_answer(
+            question=example["question"],
+            generator=_WORKER_STATE["generator"],
+            evaluator=_WORKER_STATE["evaluator"],
+            extractor=_WORKER_STATE["extractor"],
+            retriever=_WORKER_STATE["retriever"],
+            question_id=f"{data_name}_{example['id']}" if data_name is not None and "id" in example else None,
+            golden_answer=example.get("golden_answers"),
+            config=_WORKER_STATE["search_config"],
+            use_cot=use_cot,
+            use_mcts=use_mcts,
+        )
+        return res
+
+    return process_example
 
 
 def generate_answer(
@@ -44,12 +114,12 @@ def generate_answer(
         question_id=question_id,
         golden_answer=golden_answer,
         # MCTS parameters
-        max_depth=config.max_depth if config else 5,
-        num_rollouts=config.num_rollouts if config else 1,
-        top_k=config.top_k if config else 5,
-        use_golden_answer=config.use_golden_answer if config else False,
-        save_tree=config.save_tree if config else False,
-        save_dir=config.save_dir if config else "mcts_data"
+        max_depth=getattr(config, "max_depth", 5) if config else 5,
+        num_rollouts=getattr(config, "num_rollouts", 1) if config else 1,
+        top_k=getattr(config, "top_k", 5) if config else 5,
+        use_golden_answer=getattr(config, "use_golden_answer", False) if config else False,
+        save_tree=getattr(config, "save_tree", False) if config else False,
+        save_dir=getattr(config, "save_dir", "mcts_data") if config else "mcts_data",
     )
     detailed_answer = f"{final_reasoning}\n\nFinal Answer: {final_answer}" 
     return {
@@ -99,12 +169,12 @@ if __name__ == "__main__":
             search_args.num_rollouts = args.n_rollouts
         use_cot = False
         use_mcts = True
-        results_dir = os.path.join(args.results_dir, 'mcts', f"Generator_{llm_args.model_name}", f"Retriever_{retriever_args.model_name}", f"Extractor_{extractor_llm_args.model_name}")
+        results_dir = os.path.join(args.results_dir, 'mcts', f"Generator_{llm_args.model_name}", f"Retriever_4B-wiki23", f"Extractor_{extractor_llm_args.model_name}")
     else:
         search_args = search_hf_parser.parse_yaml_file(args.search_config)[0]
         use_cot = True
         use_mcts = False
-        results_dir = os.path.join(args.results_dir, 'cot', f"Generator_{llm_args.model_name}", f"Retriever_{retriever_args.model_name}", f"Extractor_{extractor_llm_args.model_name}")
+        results_dir = os.path.join(args.results_dir, 'cot', f"Generator_{llm_args.model_name}", f"Retriever_4B-wiki23", f"Extractor_{extractor_llm_args.model_name}")
     search_args.save_dir = os.path.join(results_dir, 'result_trees')
     # Ensure the directory exists
     os.makedirs(search_args.save_dir, exist_ok=True)
@@ -130,26 +200,27 @@ if __name__ == "__main__":
         print("Using CoT for inference.")
     pprint.pprint(search_args)
 
-    # Initialize the generator, evaluator, extractor, and retriever agents
-    generator = Generator(
-        client_kwargs=dataclasses.asdict(llm_args),
-        generate_kwargs=dataclasses.asdict(generation_args),
-        use_cache=generation_args.use_cache,
-        cache_dir=generation_args.cache_dir
-    )
-    evaluator = Evaluator(
-        client_kwargs=dataclasses.asdict(evaluator_llm_args),
-        generate_kwargs=dataclasses.asdict(evaluator_generation_args),
-        use_cache=evaluator_generation_args.use_cache,
-        cache_dir=evaluator_generation_args.cache_dir
-    )
-    extractor = Extractor(
-        client_kwargs=dataclasses.asdict(extractor_llm_args),
-        generate_kwargs=dataclasses.asdict(extractor_generation_args),
-        use_cache=extractor_generation_args.use_cache,
-        cache_dir=extractor_generation_args.cache_dir
-    )
-    retriever = RetrieverAgent(online_kwargs=dataclasses.asdict(retriever_args))
+    # Initialize the generator, evaluator, extractor, and retriever agents for single-question mode
+    if args.question is not None and not args.data_name:
+        generator = Generator(
+            client_kwargs=dataclasses.asdict(llm_args),
+            generate_kwargs=dataclasses.asdict(generation_args),
+            use_cache=generation_args.use_cache,
+            cache_dir=generation_args.cache_dir
+        )
+        evaluator = Evaluator(
+            client_kwargs=dataclasses.asdict(evaluator_llm_args),
+            generate_kwargs=dataclasses.asdict(evaluator_generation_args),
+            use_cache=evaluator_generation_args.use_cache,
+            cache_dir=evaluator_generation_args.cache_dir
+        )
+        extractor = Extractor(
+            client_kwargs=dataclasses.asdict(extractor_llm_args),
+            generate_kwargs=dataclasses.asdict(extractor_generation_args),
+            use_cache=extractor_generation_args.use_cache,
+            cache_dir=extractor_generation_args.cache_dir
+        )
+        retriever = RetrieverAgent(online_kwargs=dataclasses.asdict(retriever_args))
 
     # Load the dataset if data_name is provided
     if args.data_name:
@@ -244,18 +315,33 @@ if __name__ == "__main__":
             'question': simple_preprocess(x['question']),
             'golden_answers': [simple_preprocess(ans) for ans in x['golden_answers']] if isinstance(x['golden_answers'], list) else [simple_preprocess(x['golden_answers'])]
         })
-        dataset = dataset.map(lambda x: generate_answer(
-            question=x['question'],
-            generator=generator,
-            evaluator=evaluator,
-            extractor=extractor,
-            retriever=retriever,
-            question_id=f"{args.data_name}_{x['id']}",
-            golden_answer=x['golden_answers'],
-            config=search_args,
+
+        # Build a safe worker function that initializes agents per process
+        process_fn = _build_process_fn(
+            gen_client_kwargs=dataclasses.asdict(llm_args),
+            gen_generate_kwargs=dataclasses.asdict(generation_args),
+            eval_client_kwargs=dataclasses.asdict(evaluator_llm_args),
+            eval_generate_kwargs=dataclasses.asdict(evaluator_generation_args),
+            ext_client_kwargs=dataclasses.asdict(extractor_llm_args),
+            ext_generate_kwargs=dataclasses.asdict(extractor_generation_args),
+            retriever_kwargs=dataclasses.asdict(retriever_args),
+            search_config_dict=dataclasses.asdict(search_args),
             use_cot=use_cot,
-            use_mcts=use_mcts
-            ), num_proc=args.num_proc)
+            use_mcts=use_mcts,
+            data_name=args.data_name,
+        )
+
+        # Cap processes to available CPUs to avoid oversubscription/races in pebble
+        effective_num_proc = max(1, min(args.num_proc, (os.cpu_count() or args.num_proc)))
+        if effective_num_proc != args.num_proc:
+            print(f"Adjusting num_proc from {args.num_proc} to {effective_num_proc} (CPU count)")
+
+        dataset = dataset.map(
+            process_fn,
+            with_indices=True,
+            num_proc=effective_num_proc,
+        )
+
         dataset.save_to_disk(f"{results_dir}")
         print(f"Results saved to {results_dir}")
     
@@ -263,5 +349,5 @@ if __name__ == "__main__":
 
 
 
-    
+
 

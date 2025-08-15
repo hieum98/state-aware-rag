@@ -91,17 +91,13 @@ class ReasoningNode(Node, NodeMixin):
         self.memory = memory
         # Initialize the node content based on the node type
         if node_type == NodeType.USER_QUESTION:
-            assert user_question is not None, "User question must be provided for USER_QUESTION nodes."
             self.state['user_question'] = user_question
             self.state['node_content'] = user_question  # The content of the node is the user question
         elif node_type == NodeType.FINAL_ANSWER:
-            assert answer is not None, "Answer must be provided for FINAL_ANSWER nodes."
             self.state['node_content'] = answer
             self.state['detailed_answer'] = reasoning if reasoning is not None else ""  # Optional reasoning for FINAL_ANSWER nodes
             self.state['confidence'] = confidence if confidence is not None else 1.0  # Default confidence is 1.0 if not provided
         elif node_type == NodeType.SUB_QA_NODE:
-            assert question is not None, "Question must be provided for SUBQUESTION nodes."
-            assert answer is not None, "Answer must be provided for SUBQUESTION nodes."
             self.state['sub_question'] = question  # Store the sub-question
             self.state['sub_answer'] = answer  # Store the sub-answer
             self.state['node_content'] = f"{question}\n{answer}"  # Combine question and answer for SUBQUESTION nodes
@@ -467,7 +463,7 @@ class ReasoningNode(Node, NodeMixin):
         if self.children:
             return self.children
         children, new_memory = self.generate_children()
-        self.children = children
+        # self.children = children
         for child in self.children:
             child.set_memory(new_memory)
             child.set_rollout_id(rollout_id)

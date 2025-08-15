@@ -115,6 +115,8 @@ class MCTS:
         if node.is_terminal():
             self.explored_nodes.add(node)  # Mark the node as explored
             return # Terminal node, no children to expand
+        if node is None:
+            return # None node, no children to expand
         
         self.children[node] = node.find_children(rollout_id) # Find the children of the node
         if self.verbose:
@@ -138,9 +140,16 @@ class MCTS:
             if current_node.is_terminal():
                 self.explored_nodes.add(current_node)  # Mark the node as explored
                 return path
+            if current_node is None:
+                return path
             
             if current_node not in self.children.keys():
                 self.children[current_node] = current_node.find_children(rollout_id) # Expand the node if it has no children
+            
+            # Handle empty child lists gracefully
+            if not self.children[current_node]:
+                self.explored_nodes.add(current_node)
+                return path
             
             current_node = random.choice(self.children[current_node]) # Choose a random child to simulate
             path.append(current_node) # Add the current node to the path
@@ -175,7 +184,8 @@ class MCTS:
                 print(f"Simulated Step {i}:")
                 n.print_node()
                 
-        reward = simulated_node.reward()
+        # Guard reward computation for non-leaf nodes
+        reward = simulated_node.reward() if hasattr(simulated_node, 'is_valid_leaf') and simulated_node.is_valid_leaf() else 0.0
         if self.verbose:
             print(f"Reward for the simulated node: {reward}")
         

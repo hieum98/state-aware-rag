@@ -132,16 +132,11 @@ OUTCOME_AWARE_PROMPT = """You are an expert assistant specializing in evaluating
 Please analyze the provided Reasoning Path based on the following criteria. Structure your evaluation to address each point clearly, providing specific examples or references to the steps in the Reasoning Path where appropriate.
 
 ## Instructions:
-1.  Step-by-Step Analysis:  For each distinct step or component in the Reasoning Path:
-    - Logical Validity: Does the conclusion or assertion of this step logically follow from the preceding steps, given premises, or provided context? Identify any logical fallacies or gaps in inference.
-    - Factual Accuracy & Grounding: Are the claims, data, evidence, or premises introduced or utilized in this step factually correct? If context or documents are provided, is the information accurately drawn from and consistent with them? Note any inaccuracies or unsupported claims.
-    - Clarity & Precision: Is the language used in this step clear, precise, and unambiguous? Are there any terms or statements that are vague or could lead to misinterpretation? 
-    - Relevance: Does this step directly and meaningfully contribute to addressing the Original Question and reaching the final conclusion?
-2.  Overall Path Evaluation:  You will then assess the Reasoning Path as a whole, considering the following criteria:
+1.  Overall Path Evaluation:  You will then assess the Reasoning Path as a whole, considering the following criteria:
     - Coherence: Does the entire Reasoning Path demonstrate a logical and understandable flow? Do the steps connect smoothly and build upon each other in a cohesive manner? 
     - Completeness & Sufficiency: Does the path include all necessary intermediate steps, information, and considerations required to logically bridge the gap from the Original Question to the final conclusion? Are there any critical omissions? Conversely, are there any redundant or superfluous steps that do not add value
     - Consistency: Are there any internal contradictions or inconsistencies between different parts of the Reasoning Path?
-3.  Conclusion Assessment:  Based on whether a Correct Answer is provided or not, you will evaluate the final conclusion of the Reasoning Path:
+2.  Conclusion Assessment:  Based on whether a Correct Answer is provided or not, you will evaluate the final conclusion of the Reasoning Path:
     - If a Correct Answer is provided: Does the Reasoning Path ultimately arrive at the Correct Answer? If the path's conclusion is incorrect, pinpoint the earliest step(s) where the error (logical, factual, calculational, misinterpretation, etc.) occurs that leads to the deviation. If the path's conclusion matches the Correct Answer, critically assess whether the reasoning process itself is sound, complete, and free of significant flaws. (It is possible to reach a correct answer through flawed reasoning).
     - If no Correct Answer is provided (focus on intrinsic quality):
         - Based solely on the structure, content, and evidence within the Reasoning Path, how convincing and well-supported is the stated conclusion?  
@@ -158,15 +153,6 @@ Correct Answer (Optional): {correct_answer}
 """
 
 class OutcomeAwareOutput(pydantic.BaseModel):
-    step_quality: Literal['excellent', 'good', 'fair', 'poor'] = pydantic.Field(
-        ...,
-        pattern=r"^(excellent|good|fair|poor)$",
-        description="The quality of the step in the reasoning process, based on logical validity, factual accuracy, clarity, and relevance."
-    )
-    step_quality_details: str = pydantic.Field(
-        ...,
-        description="A detailed explanation of the step quality, including logical validity, factual accuracy, clarity, and relevance."
-    )
     overall_quality: Literal['excellent', 'good', 'fair', 'poor'] = pydantic.Field(
         ...,
         pattern=r"^(excellent|good|fair|poor)$",

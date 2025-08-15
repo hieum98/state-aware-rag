@@ -1,12 +1,15 @@
 import requests
 import json
 import time
-from typing import List, Union
+from typing import List, Union, TYPE_CHECKING
+
 try:
-    from flashrag.retriever.retriever import DenseRetriever
-    from flashrag.retriever.index_builder import Index_Builder
+    from flashrag.retriever.retriever import DenseRetriever  # type: ignore
+    from flashrag.retriever.index_builder import Index_Builder  # type: ignore
 except ImportError:
-    print("FlashRAG package not found. Please install it using 'pip install flashrag' if you want to use the FlashRAG retriever agent.")
+    DenseRetriever = None  # type: ignore
+    Index_Builder = None  # type: ignore
+    # FlashRAG is optional; will raise informative error if attempted to use.
 
 
 class FlashRAGRetrieverAgent:
@@ -42,28 +45,8 @@ class FlashRAGRetrieverAgent:
             rerank_model_path: str = None,
             **kwargs
             ):
-        """
-        Initializes the FlashRAGRetrieverAgent with the given configuration.
-        Args:
-            retrieval_method (str): The model to use for retrieval.
-            retrieval_model_path (str): Path to the model used for retrieval.
-            corpus_path (str): Path to the corpus to be indexed.
-            index_path (str): Path to the index, if none compute the index.
-            retrieval_pooling_method (str): Pooling method for the retrieval model.
-            faiss_gpu (bool): Whether to use GPU for FAISS indexing.
-            use_sentence_transformer (bool): Whether to use SentenceTransformer for embeddings.
-            bm25_backend (str): Backend to use for BM25 retrieval.
-            retrieval_topk (int): Number of top documents to retrieve.
-            retrieval_batch_size (int): Batch size for retrieval.
-            retrieval_use_fp16 (bool): Whether to use FP16 precision for retrieval.
-            retrieval_query_max_length (int): Maximum length of the query for retrieval.
-            save_retrieval_cache (bool): Whether to save the retrieval cache.
-            use_retrieval_cache (bool): Whether to use a pre-existing retrieval cache.
-            retrieval_cache_path (str): Path to the retrieval cache directory.
-            use_reranker (bool): Whether to use a reranker after initial retrieval.
-            rerank_model_name (str): Name of the rerank model, if applicable.
-            rerank_model_path (str): Path to the rerank model, if applicable.
-        """
+        if DenseRetriever is None or Index_Builder is None:  # type: ignore
+            raise ImportError("flashrag is not installed. Please 'pip install flashrag' to use FlashRAGRetrieverAgent.")
         self.config = {
             "retrieval_method": retriever_method,
             "retrieval_model_path": retrieval_model_path,
@@ -93,7 +76,7 @@ class FlashRAGRetrieverAgent:
         if index_path is None:
             index_path = self.build_index(config=self.config, save_dir="indexes",)['index_save_path']
         self.config["index_path"] = index_path
-        self.retriever = DenseRetriever(self.config)
+        self.retriever = DenseRetriever(self.config)  # type: ignore
         print(f"Initialized FlashRAGRetrieverAgent with config: {self.config}")
     
     @staticmethod
@@ -107,6 +90,8 @@ class FlashRAGRetrieverAgent:
             save_embedding: bool = False,
             embedding_path: str = None
             ):
+        if Index_Builder is None:  # type: ignore
+            raise ImportError("flashrag is not installed. Please 'pip install flashrag' to use FlashRAGRetrieverAgent.")
         index_builder = Index_Builder(
             retrieval_method=config["retrieval_method"],
             model_path=config["retrieval_model_path"],
@@ -214,9 +199,23 @@ class APIRetrieverAgent:
             raise Exception(f"Error: {response.status_code} - {response.text}")
         response_data = response.json()
         assert "retrieved_docs" in response_data, "Response does not contain 'retrieved_docs' key"
-        retrieved_docs = response_data.get("retrieved_docs")
+        rd = response_data.get("retrieved_docs")
+        retrieved_docs = []
         if isinstance(query, str):
-            retrieved_docs = retrieved_docs[0]
+            # Accept either list[dict] or list[list[dict]] for single query
+            if isinstance(rd, list):
+                if rd and isinstance(rd[0], list):
+                    retrieved_docs = rd[0]
+                else:
+                    retrieved_docs = rd
+        else:
+            # list of queries -> expect list[list[dict]]; normalize
+            if isinstance(rd, list):
+                if rd and isinstance(rd[0], list):
+                    retrieved_docs = rd
+                else:
+                    # server returned flat list for multiple queries; wrap once
+                    retrieved_docs = [rd]
         return {
             "retrieved_docs": retrieved_docs,
             "scores": response_data.get("scores", []) if return_score else None,
@@ -261,6 +260,6 @@ if __name__ == "__main__":
     results = retriever_agent.search(query, top_k=10, instruction=None)
     # check if 'A Day Of Fury' is in the results
     breakpoint()
-    for item in results['retrieved_docs']:
-        if '1956' in item['contents']:
+    for item in (results['retrieved_docs'] if isinstance(results['retrieved_docs'], list) else []):
+        if isinstance(item, dict) and '1956' in item.get('contents', ''):
             breakpoint()

@@ -1,4 +1,5 @@
 base_model: Qwen/Qwen3-4B-Thinking-2507
+# base_model: Qwen/Qwen3-4B
 # Automatically upload checkpoint and final model to HF
 # hub_model_id: username/custom_model_name
 
@@ -10,16 +11,16 @@ plugins:
   - axolotl.integrations.cut_cross_entropy.CutCrossEntropyPlugin
 
 datasets:
-  - path: Hieuman/extraction-v1
+  - path: Hieuman/extraction
     type: chat_template
     chat_template: qwen3
     split_thinking: true
 special_tokens:
   eos_token: <|im_end|>
   eot_token: <|im_end|>
-dataset_prepared_path: data/preprocessed/data-v0
+dataset_prepared_path: data/preprocessed/SFT
 val_set_size: 0.0
-output_dir: outputs/Extractor-Qwen3-SFT/v0
+output_dir: outputs/Extractor-Qwen3-think-SFT/v1
 
 sequence_len: 8192
 sample_packing: true
@@ -35,11 +36,11 @@ lora_target_linear: true
 
 wandb_project: state-aware-rag
 wandb_entity: hieuman2708
-wandb_name: Qwen3-SFT-v1
+wandb_name: Qwen3-think-SFT-v3
 
 gradient_accumulation_steps: 4
 micro_batch_size: 1
-num_epochs: 1
+num_epochs: 2
 optimizer: adamw_torch_fused
 lr_scheduler: cosine
 learning_rate: 0.0002

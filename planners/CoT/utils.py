@@ -28,14 +28,20 @@ def print_tree_from_root(root_node: ReasoningNode):
             node_details = f"{Fore.GREEN}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.FINAL_ANSWER:
             final_answer = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
+            memory = node_data['memory']
+            memory = [f'M. {m}' for m in memory if m]  # Filter out empty memory entries
+            memory_str = ' | '.join(memory) if memory else 'No memory'
             confidence = node_data['confidence']
-            node_details = f"Final: {final_answer} - Conf: {confidence}"
+            node_details = f"Final: {final_answer} - Memory: {memory_str} -  Conf: {confidence}"
             node_details = f"{Fore.BLUE}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SUB_QA_NODE:
             sub_question = node_data['sub_question'].replace('\n', ' ').replace('\r', ' ')
             sub_answer = node_data['sub_answer'].replace('\n', ' ').replace('\r', ' ')
+            memory = node_data['memory']
+            memory = [f'M. {m}' for m in memory if m]  # Filter out empty memory entries
+            memory_str = ' | '.join(memory) if memory else 'No memory'
             confidence = node_data['confidence']
-            node_details = f"Sub_Q: {sub_question} - Sub_A: {sub_answer} - Conf: {confidence}"
+            node_details = f"Sub_Q: {sub_question} - Sub_A: {sub_answer} - Memory: {memory_str} -  Conf: {confidence}"
             node_details = f"{Fore.CYAN}{node_id}{Style.RESET_ALL} {node_details}"
  
         tree_str = f"{pre}{node_details}"
@@ -386,7 +392,8 @@ def search(
             final_answer = evaluator.majority_vote(question=user_question, answers=answers)
             final_reasoning = final_answer  # Fallback to the final answer as reasoning if synthesis fails
     else:
-        print(f"Tree not found at {save_path}, starting a new search.")
+        if verbose:
+            print(f"Tree not found at {save_path}, starting a new search.")
         final_answer, final_reasoning, reasoning_paths = search_with_cot(
             generator=generator,
             evaluator=evaluator,
@@ -424,7 +431,7 @@ if __name__ == "__main__":
     # Example usage
     online_model_kwargs = {
         'model_name': 'openai/qwen3-8B', 
-        'url': 'http://ip-10-4-225-181:30000/v1', 
+        'url': 'http://ip-10-4-230-228:30000/v1', 
         'api_key': 'your_api_key_here',  # Replace with your actual API key
         'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
         'concurrency': 64,
@@ -499,8 +506,8 @@ if __name__ == "__main__":
         'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
     }
     extractor = Extractor(
-        # client_kwargs=online_model_kwargs, 
-        client_kwargs=api_model_kwargs,
+        client_kwargs=online_model_kwargs, 
+        # client_kwargs=api_model_kwargs,
         generate_kwargs=extract_kwargs, 
         # verbose=True,
         use_cache=True,
@@ -508,7 +515,7 @@ if __name__ == "__main__":
     )
 
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-225-181:5000/search",
+        "url": "http://ip-10-4-230-228:5000/search",
         "retrieval_topk": 64,
     }
     retriever = RetrieverAgent(online_kwargs=retriever_online_kwargs)

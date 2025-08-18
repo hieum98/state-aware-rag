@@ -22,6 +22,9 @@ def print_tree_from_root(root_node: ReasoningNode):
     for pre, _, node in RenderTree(root_node):
         node_data = node.get_node()
         node_id = node.__str__()
+        memory = node_data['memory']
+        memory = [f'M. {m}' for m in memory if m]  # Filter out empty memory entries
+        memory_str = ' | '.join(memory) if memory else 'No memory'
         if node.node_type is NodeType.USER_QUESTION:
             gt = node_data.get('golden_answer', 'N/A')
             user_question = node_data['user_question'].replace('\n', ' ').replace('\r', ' ')
@@ -29,28 +32,28 @@ def print_tree_from_root(root_node: ReasoningNode):
             node_details = f"{Fore.GREEN}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.REPHASED_QUESTION_NODE:
             rephased_question = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
-            node_details = f"Rephase: {rephased_question}"
+            node_details = f"Rephase: {rephased_question} - Memory: {memory_str}"
             node_details = f"{Fore.YELLOW}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.FINAL_ANSWER:
             final_answer = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details = f"Final: {final_answer} - Conf: {confidence}"
+            node_details = f"Final: {final_answer} - Memory: {memory_str} - Conf: {confidence}"
             node_details = f"{Fore.BLUE}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SELF_CORRECTED_NODE:
             corrected_answer = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details = f"Self_corrected: {corrected_answer} - Conf: {confidence}"
+            node_details = f"Self_corrected: {corrected_answer} - Memory: {memory_str} - Conf: {confidence}"
             node_details = f"{Fore.MAGENTA}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SUB_QA_NODE:
             sub_question = node_data['sub_question'].replace('\n', ' ').replace('\r', ' ')
             sub_answer = node_data['sub_answer'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details = f"Sub_Q: {sub_question} - Sub_A: {sub_answer} - Conf: {confidence}"
+            node_details = f"Sub_Q: {sub_question} - Sub_A: {sub_answer} - Memory: {memory_str} - Conf: {confidence}"
             node_details = f"{Fore.CYAN}{node_id}{Style.RESET_ALL} {node_details}"
         elif node.node_type is NodeType.SYNTHESIS_NODE:
             synthesis_reasoning = node_data['node_content'].replace('\n', ' ').replace('\r', ' ')
             confidence = node_data['confidence']
-            node_details = f"Synthesis: {synthesis_reasoning} - Conf: {confidence}"
+            node_details = f"Synthesis: {synthesis_reasoning} - Memory: {memory_str} - Conf: {confidence}"
             node_details = f"{Fore.RED}{node_id}{Style.RESET_ALL} {node_details}"
  
         tree_str = f"{pre}{node_details}"

@@ -1,58 +1,94 @@
-import datasets
-from preprocess.utils import normalize_text
 from collections import Counter
+import os
+import datasets
+import tqdm
+from agents.prompts.extract import EXTRACT_PROMPT, ExtractOutput
+from preprocess.utils import process_extractor_data_from_cache
+from preprocess.minhash import dedup
 
-
-def find_the_source(example, full_data):
+def create_full_content(example):
+    content = example['content']
+    if isinstance(content, list):
+        content = "\n".join(content)
     question = example['question']
-    normalized_question = normalize_text(question)
-    # Find the matching instance in the full dataset
-    matching_instance = full_data.filter(lambda x: normalized_question in x['normalized_question'] or x['normalized_question'] in normalized_question,
-                                         num_proc=32)
-    support_urls = []
-    support_titles = []
-    source_id = []
-    if len(matching_instance) > 0:
-        for item in matching_instance:
-            support_urls.extend(item['metadata']['url'] if item['metadata']['url'] else [])
-            support_titles.extend(item['metadata']['title'] if item['metadata']['title'] else [])
-            source_id.append(item['metadata']['source'])
-    # Remove duplicates, empty titles and urls
-    support_urls = list(set([url for url in support_urls if url]))
-    support_titles = list(set([title for title in support_titles if title]))
     return {
-        'support_urls': support_urls,
-        'support_titles': support_titles,
-        'source_id': source_id
+        'full_content': f"{question}\n{content}",
     }
 
+def convert_to_conversational(example):
+    question = example['question']
+    content = example['content']
+    content = "\n".join(content) if isinstance(content, list) else content
+    input_content = EXTRACT_PROMPT.format(
+        question=question,
+        document=content,
+        examples="No examples provided."
+    )
+    output = example['output']
+    # Convert output dict to ExtractOutput
+    output = ExtractOutput.model_validate(output)
+    output = output.model_dump_json(indent=2)
+    output_reasoning = example['reasoning']
+    output_content = f"<think>{output_reasoning}</think>{output}" # Hardcoded for now, which only works for Qwen3
+    messages = [
+        {'role': 'user', 'content': input_content},
+        {'role': 'assistant', 'content': output_content}
+    ]
+    return {'messages': messages}
 
-small_data = datasets.load_dataset('RUC-AIBOX/0.8k-data-SimpleDeepSearcher', split='train')
-# Find the source of each small data's  instance in the combined dataset
-full_data = datasets.load_from_disk('data/train_data')
-# Remove empty, None, or whitespace-only questions
-full_data = full_data.filter(lambda x: x['question'] and x['question'].strip(), num_proc=32)
-# Normalize the questions in the full dataset
-full_data = full_data.map(lambda x: { 'normalized_question': normalize_text(x['question'])}, num_proc=32) 
-small_data = small_data.map(lambda x: find_the_source(x, full_data))
+datapath = "/fsx/ubuntu/users/hieuman/state-aware-rag/mcts_cache/train-small-cache/extractor/bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+files = [f for f in os.listdir(datapath) if f.endswith('.json')]
+# files = files[:100]
+all_data = []
+for file in tqdm.tqdm(files, desc="Processing files"):
+    full_path = os.path.join(datapath, file)
+    file_data = process_extractor_data_from_cache(full_path)
+    all_data.extend(file_data)
 
-# Get statistics of the small data
-# Count the number of instances with support URLs or support titles is greater than 0
-support_urls_count = small_data.filter(lambda x: len(x['support_urls']) > 0, num_proc=32).num_rows
-support_titles_count = small_data.filter(lambda x: len(x['support_titles']) > 0, num_proc=32).num_rows
-# Count the number of instances within each source_id
-source_id_counter = Counter()
-for item in small_data:
-    for source in item['source_id']:
-        source_id_counter[source] += 1
-# Print the statistics
-print(f"Total instances in small data: {small_data.num_rows}")
-print(f"Instances with support URLs: {support_urls_count} ({support_urls_count / small_data.num_rows * 100:.2f}%)")
-print(f"Instances with support titles: {support_titles_count} ({support_titles_count / small_data.num_rows * 100:.2f}%)")
-print("Source ID counts:")
-for source, count in source_id_counter.items():
-    print(f"{source}: {count} instances")
+dataset = datasets.Dataset.from_list(all_data)
+dataset = dataset.map(
+    lambda x: {'content': [c.strip() for c in x['content'] if isinstance(c, str) and c.strip()]},
+    num_proc=32
+)
+dataset = dataset.filter(
+    lambda x: len(x['content']) > 0,
+    num_proc=32
+)
+# Deduplicate the dataset
+dataset = dataset.map(
+    create_full_content,
+    num_proc=64
+)
+dataset = dedup(
+    column='full_content',
+    data_path=None,
+    num_proc=32,
+    ds=dataset,
+    batch_size=1000,
+    idx_column=None, 
+    ngram=5,
+    min_length=5,
+    num_perm=250,
+    threshold=0.7,
+)
 
-# Save the small data with support URLs and titles
-small_data.save_to_disk('data/small_data_with_support')
+dataset.save_to_disk('/fsx/ubuntu/users/hieuman/state-aware-rag/data/extractor_dataset-v2')
 
+# Print out the statistics of the dataset
+print(f"Number of examples in the dataset: {len(dataset)}")
+# Number of each type of example
+types = dataset['type']
+type_counts = Counter(types)
+print("Type counts:")
+for type_name, count in type_counts.items():
+    print(f"{type_name}: {count}")
+
+### Convert to conversational format
+dataset = datasets.load_from_disk('/fsx/ubuntu/users/hieuman/state-aware-rag/data/extractor_dataset-v2')
+dataset = dataset.map(
+    convert_to_conversational,
+    num_proc=32,
+    remove_columns=dataset.column_names
+)
+# Save the final dataset
+dataset.save_to_disk('/fsx/ubuntu/users/hieuman/state-aware-rag/data/SFT-data-v2')

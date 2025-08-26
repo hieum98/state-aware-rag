@@ -16,3 +16,4 @@ last_run_prepared
 wandb
 cot_cache
 cot_data
+finetune/sft/Qwen3-SFT.sh

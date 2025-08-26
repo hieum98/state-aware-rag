@@ -304,7 +304,7 @@ class ReasoningNode(Node, NodeMixin):
         if memory_information:
             memory_information = [f"- {item}" for item in memory_information if item]
             memory_data = "\n".join(memory_information)
-            important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+            important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
         if reasoning_trace:
             important_information += f"\t**Reasoning trace**\n{reasoning_trace}\n----------\n"
         if self.verbose:
@@ -369,8 +369,8 @@ class ReasoningNode(Node, NodeMixin):
         subquestion_respones = self.generator.generate_subquestion(question=user_question, context=memory_data, n=1)
         answerable_main_question = [item['answerable_main_question'] for item in subquestion_respones if item['answerable_main_question'] is not None]
         # Majority voting for answerable main question
-        answerable_sub_questions = sum(answerable_main_question) / len(answerable_main_question) if len(answerable_main_question) > 0 else 0.0
-        if answerable_sub_questions > 0.5:
+        answerable_main_question = sum(answerable_main_question) / len(answerable_main_question) if len(answerable_main_question) > 0 else 0.0
+        if answerable_main_question > 0.5:
             return self.generate_final_answer_node()  # If the answerable sub-question is more than 50%, generate direct answer node
         else:
             nodes = []
@@ -391,7 +391,7 @@ class ReasoningNode(Node, NodeMixin):
                 if memory_information:
                     memory_information = [f"- {item}" for item in memory_information if item]
                     memory_data = "\n".join(memory_information)
-                    important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+                    important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
                 if external_information:
                     external_information = [f"- {item}" for item in external_information if item]
                     all_external_information.extend(external_information)

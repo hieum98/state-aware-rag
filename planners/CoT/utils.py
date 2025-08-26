@@ -65,6 +65,7 @@ def find_valid_solution_nodes(node: ReasoningNode) -> list[ReasoningNode]:
     
     return valid_nodes
 
+
 def load_tree_from_file(
     file_path: str,
     # Root node components
@@ -160,6 +161,7 @@ def load_tree_from_file(
         print(f"Loaded MCTS tree from {file_path} with {len(all_nodes)} nodes.")
         print_tree_from_root(root_node)
     return root_node
+
 
 def search_with_cot(
         # Root node components
@@ -411,7 +413,6 @@ def search(
             memory=memory
         )
     return final_answer, final_reasoning, reasoning_paths
-
 
 
 def clear_agent_cache(generator, extractor, evaluator):

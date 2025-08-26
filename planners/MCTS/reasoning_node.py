@@ -332,7 +332,7 @@ class ReasoningNode(Node, NodeMixin):
             memory_information = [f"-{item}" if not item.startswith("-") else item
                                   for item in memory_information if item.strip()]
             memory_data = "\n".join(memory_information)
-            important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+            important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
         if reasoning_trace:
             important_information += f"\t**Reasoning trace**\n{reasoning_trace}\n----------\n"
         if self.verbose:
@@ -403,7 +403,7 @@ class ReasoningNode(Node, NodeMixin):
                 memory_information = [f"-{item}" if not item.startswith("-") else item
                                       for item in memory_information if item.strip()]  # Remove empty strings
                 memory_data = "\n".join(memory_information)
-                important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+                important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
             if reasoning_trace:
                 important_information += f"\t**Reasoning trace**\n{reasoning_trace}"
             if self.verbose:
@@ -464,7 +464,7 @@ class ReasoningNode(Node, NodeMixin):
                         memory_information = [f"-{item}" if not item.startswith("-") else item
                                               for item in memory_information if item.strip()]  # Remove empty strings
                         memory_data = "\n".join(memory_information)
-                        important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+                        important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
                     if external_information:
                         external_information = [f"-{item}" if not item.startswith("-") else item
                                                 for item in external_information if item.strip()]
@@ -544,7 +544,7 @@ class ReasoningNode(Node, NodeMixin):
             memory_information = [f"-{item}" if not item.startswith("-") else item
                                   for item in memory_information if item.strip()]  # Remove empty strings
             memory_data = "\n".join(memory_information)
-            important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+            important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
         if external_information:
             external_information = [f"-{item}" if not item.startswith("-") else item
                                     for item in external_information if item.strip()]  # Remove empty strings
@@ -592,7 +592,7 @@ class ReasoningNode(Node, NodeMixin):
             memory_information = [f"-{item}" if not item.startswith("-") else item
                                   for item in memory_information if item.strip()]  # Remove empty strings
             memory_data = "\n".join(memory_information)
-            important_information += f"\t**Information from memory**\n{memory_data}\n----------\n"
+            important_information += f"\t**Memory knowledge**\n{memory_data}\n----------\n"
         if reasoning_trace:
             important_information += f"\t**Reasoning trace**\n{reasoning_trace}\n----------\n"
         if self.verbose:

@@ -11,6 +11,8 @@ import ray
 from verl.utils.rollout_trace import rollout_trace_op
 
 from agents.retriever_agents import RetrieverAgent
+from agents.roles.generator import Generator
+from agents.roles.extractor import Extractor
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOGGING_LEVEL", "WARN"))
@@ -77,6 +79,7 @@ class AgentExecutionWorker:
                     logger.warning(f"Error when executing search: {e}")
         else:
             return fn(*fn_args, **fn_kwargs)
+    
         
 def init_agent_execution_pool(num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode):
     """Initialize execution pool."""
@@ -190,6 +193,7 @@ class RetrievalAgent(BaseAgent):
         # Initialize the retriever agent
         self.online_retrieval_config = config.get("online_retrieval_config", None)
         self.offline_retrieval_config = config.get("offline_retrieval_config", None)
+        self.top_k = config.get("top_k", None)
         assert self.online_retrieval_config or self.offline_retrieval_config, "At least one of online_retrieval_config or offline_retrieval_config must be provided."
         self.agent = RetrieverAgent(
             online_kwargs=self.online_retrieval_config,
@@ -197,6 +201,20 @@ class RetrievalAgent(BaseAgent):
             )
 
     def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        """Run the retrieval agent.
+        Args:
+            instance_id: The instance id of the agent.
+            parameters: The parameters for the agent.
+                - retrieval_query_list: List[str], the list of queries to retrieve documents for.
+                - top_k: int, the number of top documents to retrieve for each query. If not provided, use the default top_k from config.
+                - instruction: Optional[str], an optional instruction to guide the retrieval.
+        Returns:
+            results: dict, the retrieval results.
+                - retrieval_docs: List[List[str]], the list of retrieved documents for each query.
+                - retrieval_urls: List[List[str]], the list of URLs for each retrieved document.
+                - retrieval_ids: List[List[str]], the list of IDs for each retrieved document. 
+            metadata: dict, the metadata for the retrieval.
+        """
         retrieval_query_list = parameters.get("retrieval_query_list", [])
         if isinstance(retrieval_query_list, str):
             retrieval_query_list = [retrieval_query_list]
@@ -204,7 +222,7 @@ class RetrievalAgent(BaseAgent):
             error_msg = "Error: 'retrieval_query_list' is missing, empty, or not a list in parameters."
             logger.error(f"[RetrievalAgent] {error_msg} Received parameters: {parameters}")
             return {"error": error_msg}, {"metric/status": "invalid_parameters"}
-        top_k = parameters.get("top_k", 3)
+        top_k = parameters.get("top_k", self.top_k if self.top_k is not None else 5)
         instruction = parameters.get("instruction", None)
         response = None
         error_msg = None
@@ -247,7 +265,18 @@ class RetrievalAgent(BaseAgent):
                 return {"retrieval_docs": None}, metadata
             if any(len(docs) == 0 for docs in retrieval_docs):
                 logger.info(f"[RetrievalAgent] One or more queries returned zero results.")
-            results = {"retrieval_docs": retrieval_docs}
+            all_retrieval_docs = []
+            all_retrieval_urls = []
+            all_retrieval_ids = []
+            for docs in retrieval_docs:
+                all_retrieval_docs.append([doc.get("content", "") for doc in docs])
+                all_retrieval_urls.append([doc.get("url", "") for doc in docs])
+                all_retrieval_ids.append([doc.get("id", "") for doc in docs])
+            results = {
+                "retrieval_docs": all_retrieval_docs,
+                "retrieval_urls": all_retrieval_urls,
+                "retrieval_ids": all_retrieval_ids,
+            }
             total_results = sum(len(docs) for docs in retrieval_docs if isinstance(docs, list))
             metadata["metric/status"] = "success"
             metadata["metric/total_results"] = total_results
@@ -258,7 +287,188 @@ class RetrievalAgent(BaseAgent):
             logger.error(f"[RetrievalAgent] {error_msg}")
             metadata["metric/status"] = "processing_error"
             return {"retrieval_docs": error_msg}, metadata
-                
+
+
+class GeneratorAgent(BaseAgent):
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.client_kwargs = config.get("client_kwargs", None)
+        self.generation_config = config.get("generation_config", None)
+        self.use_cache = config.get("use_cache", False)
+        model_name = self.generation_config['model_name']
+        cache_dir = config.get("cache_dir", 'cache/generator')
+        self.cache_dir = os.path.join(cache_dir, model_name)
+        assert self.client_kwargs is not None, "client_kwargs must be provided in config."
+        assert self.generation_config is not None, "generation_config must be provided in config."
+        self.agent = Generator(
+            client_kwargs=self.client_kwargs,
+            generate_kwargs=self.generation_config,
+            use_cache=self.use_cache,
+            cache_dir=self.cache_dir,
+        )
+
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        # check parameters
+        generate_fn = parameters.pop("generate_fn", None)
+        # Check if generate_fn is method of self.agent
+        if not generate_fn or not hasattr(self.agent, generate_fn) or not callable(getattr(self.agent, generate_fn)):
+            error_msg = f"Error: 'generate_fn' is missing or invalid in parameters. Received: {parameters}"
+            logger.error(f"[GeneratorAgent] {error_msg}")
+            return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
+        question_list = parameters.get("question_list", [])
+        if isinstance(questions, str):
+            questions = [questions]
+        if not questions or not isinstance(questions, list):
+            error_msg = "Error: 'questions' is missing, empty, or not a list in parameters."
+            logger.error(f"[GeneratorAgent] {error_msg} Received parameters: {parameters}")
+            return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
+        context_list = parameters.get("context_list", None)
+        if generate_fn in ['generate_answer', 'generate_subquestion', 'generate_synthesis', 'finalize', 'self_correct']:
+            if context_list is not None and isinstance(context_list, str):
+                context_list = [context_list]
+            if context_list is not None and (not isinstance(context_list, list) or len(context_list) != len(question_list)):
+                error_msg = "'context_list' must be a list of the same length as 'question_list' if provided."
+                logger.error(f"[GeneratorAgent] {error_msg} Received parameters: {parameters}")
+                return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
+        current_answer_list = None
+        if generate_fn in ['self_correct']:
+            current_answer_list = parameters.get("current_answer_list", None)
+            if current_answer_list is not None and isinstance(current_answer_list, str):
+                current_answer_list = [current_answer_list]
+            if current_answer_list is not None and (not isinstance(current_answer_list, list) or len(current_answer_list) != len(question_list)):
+                error_msg = "'current_answer_list' must be a list of the same length as 'question_list' if provided."
+                logger.error(f"[GeneratorAgent] {error_msg} Received parameters: {parameters}")
+                return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
+        inputs_kwargs = parameters.get("run_kwargs", {})
+        inputs_kwargs = kwargs.update({
+            "question": question_list,
+            "context": context_list,
+            "current_answer": current_answer_list,
+        })
+        # update inputs_kwargs with kwargs
+        inputs_kwargs.update(kwargs)
+        
+        try:
+            generate_method = getattr(self.agent, generate_fn)
+            response = generate_method(**inputs_kwargs) # List of BaseModel as output
+        except Exception as e:
+            error_msg = f"Generation execution failed: {e}"
+            logger.error(f"[GeneratorAgent] {error_msg}")
+            return {"error": error_msg}, {"metric/status": "execution_error"}
+        
+        logger.debug(f"[GeneratorAgent] Generation response: {response} for instance_id: {instance_id}")
+        metadata = {
+            "metric/question_count": len(question_list),
+            "questions": question_list,
+            "generate_fn": generate_fn,
+            "api_response": None,
+            "metric/status": "unknown",
+        }
+        if response is None:
+            logger.error(f"[GeneratorAgent] No response received from generation.")
+            results = {"output": None}
+            metadata["metric/status"] = "error"
+            return results, metadata
+        is_batch = True if len(question_list) > 1 else False
+        if is_batch:
+            if len(response) != len(question_list):
+                logger.warning(f"[GeneratorAgent] Mismatch in number of questions and results: {len(question_list)} questions but {len(response)} results.")
+                metadata["metric/status"] = "mismatch_results"
+                return {"output": None}, metadata
+        results = {
+            "output": response,
+            "is_batch": True if len(question_list) > 1 else False,
+        }
+        metadata["api_response"] = response
+        metadata["metric/status"] = "success"
+        logger.info(f"[GeneratorAgent] Successful generation for {len(question_list)} questions.")
+        return results, metadata
+    
+
+class ExtractorAgent(BaseAgent):
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.client_kwargs = config.get("client_kwargs", None)
+        self.generation_config = config.get("generation_config", None)
+        self.use_cache = config.get("use_cache", False)
+        model_name = self.generation_config['model_name']
+        cache_dir = config.get("cache_dir", 'cache/generator')
+        self.cache_dir = os.path.join(cache_dir, model_name)
+        assert self.client_kwargs is not None, "client_kwargs must be provided in config."
+        assert self.generation_config is not None, "generation_config must be provided in config."
+
+        self.agent = Extractor(
+            client_kwargs=self.client_kwargs,
+            generate_kwargs=self.generation_config,
+            use_cache=self.use_cache,
+            cache_dir=self.cache_dir,
+        )
+
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        # check parameters
+        question = parameters.get("question", [])
+        if isinstance(question, str):
+            question = [question]
+        if not question or not isinstance(question, list):
+            error_msg = "Error: 'question' is missing, empty, or not a list in parameters."
+            logger.error(f"[ExtractorAgent] {error_msg} Received parameters: {parameters}")
+            return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
+        document = parameters.get("document", None)
+        if document is not None and isinstance(document, str):
+            document = [document]
+        if document is not None and (not isinstance(document, list) or len(document) != len(question)):
+            error_msg = "'document' must be a list of the same length as 'question' if provided."
+            logger.error(f"[ExtractorAgent] {error_msg} Received parameters: {parameters}")
+            return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
+        inputs_kwargs = parameters.get("run_kwargs", {})
+        inputs_kwargs = kwargs.update({
+            "question": question,
+            "document": document,
+        })
+        # update inputs_kwargs with kwargs
+        inputs_kwargs.update(kwargs)
+        
+        try:
+            responses = self.agent.extract(**inputs_kwargs) # List of dict as output
+        except Exception as e:
+            error_msg = f"Extraction execution failed: {e}"
+            logger.error(f"[ExtractorAgent] {error_msg}")
+            return {"error": error_msg}, {"metric/status": "execution_error"}
+        
+        logger.debug(f"[ExtractorAgent] Extraction response: {responses} for instance_id: {instance_id}")
+        metadata = {
+            "metric/question_count": len(question),
+            "questions": question,
+            "api_response": None,
+            "metric/status": "unknown",
+        }
+        if responses is None:
+            logger.error(f"[ExtractorAgent] No response received from extraction.")
+            results = {"extracted_info": None}
+            metadata["metric/status"] = "error"
+            return results, metadata
+        
+        is_batch = True if len(question) > 1 else False
+        extracted_info = []
+        if is_batch:
+            if len(responses) != len(question):
+                logger.warning(f"[ExtractorAgent] Mismatch in number of questions and results: {len(question)} questions but {len(responses)} results.")
+                metadata["metric/status"] = "mismatch_results"
+                return {"extracted_info": None}, metadata
+        results = {
+            "extracted_info": extracted_info,
+            "is_batch": is_batch,
+        }
+        metadata["api_response"] = responses
+        metadata["metric/status"] = "success"
+        logger.info(f"[ExtractorAgent] Successful extraction for {len(question)} questions.")
+        return results, metadata
 
 
 if __name__=='__main__':
@@ -268,11 +478,11 @@ if __name__=='__main__':
     ray.init()
     retrieval_config = {
         "name": "retrieval_agent",
-        "num_workers": 10,
-        "rate_limit": 10,
-        "timeout": 20,
+        "num_workers": 64,
+        "rate_limit": 32,
+        "timeout": 300,
         "enable_global_rate_limit": True,
-        "retriever_online_kwargs": {
+        "online_retrieval_config": {
             "url": "http://ip-10-4-225-181:5000/search",
             "retrieval_topk": 5,
             "query_instruction": None,
@@ -286,7 +496,7 @@ if __name__=='__main__':
         "top_k": 3,
     }
     results, reward, metrics = asyncio.run(agent.execute(instance_id, parameters))
-    breakpoint()
+    # breakpoint() # with ray debug, breakpoint() does not work or hang
 
 
 

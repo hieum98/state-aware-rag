@@ -10,7 +10,7 @@ from agents.prompts import (
     self_correct,
     rephase_question,
     )
-from agents.utils import extract_info_from_text
+from agents.utils import extract_info_from_text, convert_score_to_confidence
 
 
 class Generator(LLMAgent):
@@ -82,8 +82,28 @@ class Generator(LLMAgent):
             print("Generating answers for questions:", question)
             print("Context:", context)
         kwargs['output_schema'] = decompose_and_answer.AnswerOutput
-        return self.role_execute(batch, **kwargs)
-
+        response = self.role_execute(batch, **kwargs)
+        all_results = []
+        for x in response:
+            reasoning = x.get('reasoning', "")
+            detailed_answer = x.get('detailed_answer', "")
+            answer = x.get('answer', "")
+            confidence = x.get('confidence', None)
+            confidence = convert_score_to_confidence(confidence)
+            assert answer or detailed_answer, "Either answer or detailed_answer must be provided."
+            if not answer and detailed_answer:
+                answer = detailed_answer # If answer is empty, use detailed_answer as answer
+            if not detailed_answer and answer:
+                detailed_answer = answer # If detailed_answer is empty, use answer as detailed_answer
+            _output = decompose_and_answer.AnswerOutput(
+                answer=answer,
+                detailed_answer=detailed_answer,
+                confidence=confidence,
+                reasoning=reasoning
+            )
+            all_results.append(_output)
+        return all_results       
+    
     def generate_subquestion(
             self,
             question: Union[str, List[str]],
@@ -119,7 +139,24 @@ class Generator(LLMAgent):
             print("Generating subquestions for questions:", question)
             print("Context:", context)
         kwargs['output_schema'] = decompose_and_answer.SubquestionOutput
-        return self.role_execute(batch, **kwargs)
+        response =  self.role_execute(batch, **kwargs)
+        all_results = []
+        for i, x in enumerate(response):
+            answerable_main_question = x.get('answerable_main_question', False)
+            subquestion = x.get('subquestion', "")
+            assert subquestion or answerable_main_question, "Either subquestion must be provided or the main question must be answerable."
+            if answerable_main_question:
+                subquestion = question[i] if len(question) > 1 else question[0]
+            reasoning = x.get('reasoning', "")
+            gap_type = x.get('gap_type', "null")
+            _output = decompose_and_answer.SubquestionOutput(
+                answerable_main_question=answerable_main_question,
+                subquestion=subquestion,
+                reasoning=reasoning,
+                gap_type=gap_type
+            )
+            all_results.append(_output)
+        return all_results
 
     def generate_synthesis(
             self,
@@ -156,7 +193,26 @@ class Generator(LLMAgent):
             print("Generating synthesis for questions:", question)
             print("Context:", context)
         kwargs['output_schema'] = synthesize.SynthesizeOutput
-        return self.role_execute(batch, **kwargs)
+        response = self.role_execute(batch, **kwargs)
+        all_results = []
+        for x in response:
+            answerable_main_question = x.get('answerable_main_question', False)
+            synthesis = x.get('synthesis', "")
+            # If the synthesis is empty, set answerable_main_question to False to keep reasoning consistent
+            if not synthesis:
+                answerable_main_question = False
+            reasoning = x.get('reasoning', "")
+            confidence = x.get('confidence', None)
+            confidence = convert_score_to_confidence(confidence)
+            assert synthesis, "Synthesis must be provided."
+            _output = synthesize.SynthesizeOutput(
+                answerable_main_question=answerable_main_question,
+                synthesis=synthesis,
+                confidence=confidence,
+                reasoning=reasoning
+            )
+            all_results.append(_output)
+        return all_results
 
     def finalize(
             self,
@@ -193,7 +249,27 @@ class Generator(LLMAgent):
             print("Generating final answers for questions:", question)
             print("Context:", context)
         kwargs['output_schema'] = finalize.FinalizeOutput
-        return self.role_execute(batch, **kwargs)
+        response = self.role_execute(batch, **kwargs)
+        all_results = []
+        for x in response:
+            final_answer = x.get('answer', "")
+            detailed_final_answer = x.get('detailed_answer', "")
+            assert final_answer or detailed_final_answer, "Either final_answer or detailed_final_answer must be provided."
+            if not final_answer and detailed_final_answer:
+                final_answer = detailed_final_answer # If final_answer is empty, use detailed_final_answer as final_answer
+            if not detailed_final_answer and final_answer:
+                detailed_final_answer = final_answer # If detailed_final_answer is empty, use final_answer as detailed_final_answer
+            reasoning = x.get('reasoning', "")
+            confidence = x.get('confidence', None)
+            confidence = convert_score_to_confidence(confidence)
+            _output = finalize.FinalizeOutput(
+                answer=final_answer,
+                detailed_answer=detailed_final_answer,
+                confidence=confidence,
+                reasoning=reasoning
+            )
+            all_results.append(_output)
+        return all_results
     
     def self_correct(
             self,
@@ -236,7 +312,28 @@ class Generator(LLMAgent):
             print("Current Answers:", current_answer)
             print("Context:", context)
         kwargs['output_schema'] = self_correct.SelfCorrectOutput
-        return self.role_execute(batch, **kwargs)
+        response = self.role_execute(batch, **kwargs)
+        all_results = []
+        for x in response:
+            reanswer = x.get('reanswer', "")
+            reasoning = x.get('reasoning', "")
+            verification_status = x.get('verification_status', "UNSUPPORTED")
+            confidence = x.get('confidence', None)
+            confidence = convert_score_to_confidence(confidence)
+            assert reasoning or reanswer, "Either reasoning or reanswer must be provided."
+            if not reanswer and reasoning:
+                reanswer = reasoning # If reanswer is empty, use reasoning as reanswer
+            if not reasoning and reanswer:
+                reasoning = reanswer # If reasoning is empty, use reanswer as reasoning
+            _output = self_correct.SelfCorrectOutput(
+                verification_status=verification_status,
+                reanswer=reanswer,
+                reasoning=reasoning,
+                confidence=confidence
+            )
+            
+            all_results.append(_output)
+        return all_results
 
     def rephase_question(
             self,
@@ -265,7 +362,22 @@ class Generator(LLMAgent):
         if self.verbose:
             print("Rephrasing questions:", question)
         kwargs['output_schema'] = rephase_question.RephraseQuestionOutput
-        return self.role_execute(batch, **kwargs)
+        response = self.role_execute(batch, **kwargs)
+        all_results = []
+        for x in response:
+            rephrased_question = x.get('rephrased_question', "")
+            reasoning = x.get('reasoning', "")
+            assert rephrased_question or reasoning, "Either rephrased_question or reasoning must be provided."
+            if not rephrased_question and reasoning:
+                rephrased_question = reasoning # If rephrased_question is empty, use reasoning as rephrased_question
+            if not reasoning and rephrased_question:
+                reasoning = rephrased_question # If reasoning is empty, use rephrased_question as reasoning
+            _output = rephase_question.RephraseQuestionOutput(
+                rephrased_question=rephrased_question,
+                reasoning=reasoning
+            )
+            all_results.append(_output)
+        return all_results
 
     def generate_queries_for_retriever(
             self,
@@ -304,7 +416,8 @@ class Generator(LLMAgent):
                     # Remove empty queries
                     queries = [q for q in queries if q]
                 item['queries'] = queries
-            output.append(item)
+                _output = decompose_and_answer.QueriesGenerationOutput(queries=item['queries'], reasoning=None)
+            output.append(_output)
         if not output:
             print("Empty response from the model. Please check!")
             breakpoint()

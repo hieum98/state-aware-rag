@@ -67,6 +67,17 @@ def convert_confidence_to_score(confidence: str) -> float:
         return 0.1
 
 
+def convert_score_to_confidence(score: float) -> str:
+    if not isinstance(score, (int, float)):
+        return 'low'
+    if score >= 0.75:
+        return 'high'
+    elif score >= 0.25:
+        return 'medium'
+    else:
+        return 'low'
+
+
 if __name__ == "__main__":
     subquestion = "What is the capital of France?\nParis is the capital of France.\nFrance is a country in Europe."
     text = '{\n\n"answerable_main_question": false,\n"subquestion": ' + f'"{subquestion}"' +\

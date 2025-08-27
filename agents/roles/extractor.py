@@ -62,6 +62,7 @@ class Extractor(LLMAgent):
         extracted_info = []
         for response in responses:
             decision = response['decision']
+            decision = decision if decision == 'relevant' else 'not_relevant'
             try:
                 if isinstance(response['information'], list):
                     info = response['information']
@@ -69,10 +70,12 @@ class Extractor(LLMAgent):
                     info = [response['information']]
             except:
                 info = [response['information']]
-            extracted_info.append({
-                'decision': decision,
-                'extracted_information': info,
-            })
+            output = extract.ExtractOutput(
+                information=info,
+                decision=decision,
+                reasoning=response.get('reasoning', '')
+            )
+            extracted_info.append(output)
         if len(question) == 1 and len(extracted_info) > 1:
             decision = [x['decision'] for x in extracted_info]
             # If any decision is 'relevant', we return 'relevant'
@@ -86,16 +89,20 @@ class Extractor(LLMAgent):
                         all_info.append(item['extracted_information'])
                 # Deduplicate the information
                 all_info = list(set(all_info))
-                extracted_info = [{
-                    'decision': decision,
-                    'extracted_information': all_info
-                }]
+                output = extract.ExtractOutput(
+                    information=all_info,
+                    decision=decision,
+                    reasoning=""
+                )
+                extracted_info = [output]
             else:
-                decision = 'not relevant'
-                extracted_info = [{
-                    'decision': decision,
-                    'extracted_information': []
-                }]
+                decision = 'not_relevant'
+                output = extract.ExtractOutput(
+                    information=[],
+                    decision=decision,
+                    reasoning=""
+                )
+                extracted_info = [output]
         return extracted_info           
 
 

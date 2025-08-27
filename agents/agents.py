@@ -273,6 +273,7 @@ class RetrievalAgent(BaseAgent):
                 all_retrieval_urls.append([doc.get("url", "") for doc in docs])
                 all_retrieval_ids.append([doc.get("id", "") for doc in docs])
             results = {
+                "queries": retrieval_query_list,
                 "retrieval_docs": all_retrieval_docs,
                 "retrieval_urls": all_retrieval_urls,
                 "retrieval_ids": all_retrieval_ids,
@@ -380,6 +381,7 @@ class GeneratorAgent(BaseAgent):
                 metadata["metric/status"] = "mismatch_results"
                 return {"output": None}, metadata
         results = {
+            "input": question_list,
             "output": response,
             "is_batch": True if len(question_list) > 1 else False,
         }

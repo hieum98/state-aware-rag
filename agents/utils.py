@@ -1,5 +1,6 @@
 import re
-from typing import List
+from typing import List, Union
+from agents.prompts import extract
 
 
 def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
@@ -76,6 +77,63 @@ def convert_score_to_confidence(score: float) -> str:
         return 'medium'
     else:
         return 'low'
+    
+
+def format_reasoning_trace(trace: List[str]) -> str:
+    formatted_trace = ""
+    try:
+        i = 1
+        for step in trace:
+            if step.strip():
+                formatted_trace += f"Step {i}: {step.strip()}\n"
+                i += 1
+        return formatted_trace.strip()
+    except Exception as e:
+        print(f"Error in formatting reasoning trace: {e}")
+        return ""
+
+def format_memory(memory: List[str]) -> str:
+    formatted_memory = ""
+    try:
+        for mem in memory:
+            if mem and mem.strip():
+                formatted_memory += f"- {mem.strip()}\n"
+        return formatted_memory.strip()
+    except Exception as e:
+        print(f"Error in formatting memory: {e}")
+        return ""
+
+def format_context(memory: str = None, reasoning_trace: str = None, explored_data: str = None):
+    context = ""
+    reasoning_trace = reasoning_trace.strip()
+    if memory:
+        context += f"\t**Memory knowledge**\n{memory}\n----------\n"
+    if explored_data:
+        context += f"\t**Information from external KB**\n{explored_data}\n----------\n"
+    if reasoning_trace:
+        context += f"\t**Reasoning trace**\n{reasoning_trace}"
+    if context.strip() == "":
+        print("[WARNING] Context is empty!")
+    return context
+
+
+def format_extractor_messages(question: Union[str, List[str]], context: Union[str, List[str]]):
+    if isinstance(question, str):
+        question = [question]
+    if isinstance(context, str):
+        context = [context] 
+    assert len(question) == len(context), "Number of questions and contexts must be the same"
+    batch = [
+        extract.EXTRACT_PROMPT.format(
+            question=q,
+            document=d,
+            examples="No examples provided."
+            ) for q, d in zip(question, context)
+    ]
+    batch = [[{'role': 'user', 'content': x}] for x in batch]
+    if len(batch) == 1:
+        return batch[0]
+    return batch
 
 
 if __name__ == "__main__":

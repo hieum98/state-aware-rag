@@ -117,6 +117,22 @@ def format_context(memory: str = None, reasoning_trace: str = None, explored_dat
     return context
 
 
+def format_reflection_context(current_memory: str = None, intermediate_conclusions: str = None, explored_data: str = None):
+    context = ""
+    current_memory = current_memory.strip() if current_memory else ""
+    intermediate_conclusions = intermediate_conclusions.strip() if intermediate_conclusions else ""
+    explored_data = explored_data.strip() if explored_data else ""
+    if current_memory:
+        context += f"\t**Current memory knowledge**\n{current_memory}\n----------\n"
+    if intermediate_conclusions:
+        context += f"\t**Intermediate conclusions**\n{intermediate_conclusions}"
+    if explored_data:
+        context += f"\t**Information from external KB**\n{explored_data}\n----------\n"
+    if context.strip() == "":
+        print("[WARNING] Reflection context is empty!")
+    return context
+
+
 def format_extractor_messages(question: Union[str, List[str]], context: Union[str, List[str]]):
     if isinstance(question, str):
         question = [question]

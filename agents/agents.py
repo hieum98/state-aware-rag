@@ -242,7 +242,7 @@ class RetrievalAgent(BaseAgent):
         }
         if response is None:
             logger.error(f"[RetrievalAgent] No response received from search.")
-            resutls = {"retrieval_docs": None}
+            resutls = {"retrieval_docs": []}
             metadata["metric/status"] = "error"
             return resutls, metadata
         
@@ -258,11 +258,11 @@ class RetrievalAgent(BaseAgent):
             if len(retrieval_docs) != len(retrieval_query_list):
                 logger.warning(f"[RetrievalAgent] Mismatch in number of queries and results: {len(retrieval_query_list)} queries but {len(retrieval_docs)} results.")
                 metadata["metric/status"] = "mismatch_results"
-                return {"retrieval_docs": None}, metadata
+                return {"retrieval_docs": []}, metadata
             if any(not isinstance(docs, list) for docs in retrieval_docs):
                 logger.warning(f"[RetrievalAgent] One or more results are not lists.")
                 metadata["metric/status"] = "invalid_results"
-                return {"retrieval_docs": None}, metadata
+                return {"retrieval_docs": []}, metadata
             if any(len(docs) == 0 for docs in retrieval_docs):
                 logger.info(f"[RetrievalAgent] One or more queries returned zero results.")
             all_retrieval_docs = []
@@ -287,7 +287,7 @@ class RetrievalAgent(BaseAgent):
             error_msg = f"Error processing search results: {e}"
             logger.error(f"[RetrievalAgent] {error_msg}")
             metadata["metric/status"] = "processing_error"
-            return {"retrieval_docs": error_msg}, metadata
+            return {"retrieval_docs": []}, metadata
 
 
 class GeneratorAgent(BaseAgent):

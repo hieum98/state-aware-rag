@@ -13,6 +13,7 @@ from verl.utils.rollout_trace import rollout_trace_op
 from agents.retriever_agents import RetrieverAgent
 from agents.roles.generator import Generator
 from agents.roles.extractor import Extractor
+from agents.roles.evaluator import Evaluator
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOGGING_LEVEL", "WARN"))
@@ -296,7 +297,7 @@ class GeneratorAgent(BaseAgent):
         self.client_kwargs = config.get("client_kwargs", None)
         self.generation_config = config.get("generation_config", None)
         self.use_cache = config.get("use_cache", False)
-        model_name = self.generation_config['model_name']
+        model_name = self.client_kwargs['model_name']
         cache_dir = config.get("cache_dir", 'cache/generator')
         self.cache_dir = os.path.join(cache_dir, model_name)
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."
@@ -398,7 +399,7 @@ class ExtractorAgent(BaseAgent):
         self.generation_config = config.get("generation_config", None)
         self.use_cache = config.get("use_cache", False)
         model_name = self.generation_config['model_name']
-        cache_dir = config.get("cache_dir", 'cache/generator')
+        cache_dir = config.get("cache_dir", 'cache/extractor')
         self.cache_dir = os.path.join(cache_dir, model_name)
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."
         assert self.generation_config is not None, "generation_config must be provided in config."
@@ -472,6 +473,123 @@ class ExtractorAgent(BaseAgent):
         logger.info(f"[ExtractorAgent] Successful extraction for {len(question)} questions.")
         return results, metadata
 
+
+class EvaluatorAgent(BaseAgent):
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.client_kwargs = config.get("client_kwargs", None)
+        self.generation_config = config.get("generation_config", None)
+        self.use_cache = config.get("use_cache", False)
+        model_name = self.generation_config['model_name']
+        cache_dir = config.get("cache_dir", 'cache/evaluator')
+        self.cache_dir = os.path.join(cache_dir, model_name)
+        assert self.client_kwargs is not None, "client_kwargs must be provided in config."
+        assert self.generation_config is not None, "generation_config must be provided in config."
+
+        self.agent = Evaluator(
+            client_kwargs=self.client_kwargs,
+            generate_kwargs=self.generation_config,
+            use_cache=self.use_cache,
+            cache_dir=self.cache_dir,
+        )
+
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        evaluate_fn = parameters.pop("evaluate_fn", None)
+        
+        if evaluate_fn == "evaluate_final_answer":
+            question = parameters.get("question", [])
+            if isinstance(question, str):
+                question = [question]
+            correct_answer = parameters.get("correct_answer", [])
+            if isinstance(correct_answer, str):
+                correct_answer = [correct_answer]
+            predicted_answer = parameters.get("predicted_answer", [])
+            if isinstance(predicted_answer, str):
+                predicted_answer = [predicted_answer]
+            assert len(question) == len(correct_answer) == len(predicted_answer), "'question', 'correct_answer', and 'predicted_answer' must be lists of the same length."
+            inputs_kwargs = parameters.get("run_kwargs", {})
+            inputs_kwargs = kwargs.update({
+                "question": question,
+                "correct_answer": correct_answer,
+                "predicted_answer": predicted_answer,
+            })
+            # update inputs_kwargs with kwargs
+            inputs_kwargs.update(kwargs)
+            try:
+                responses = self.agent.evaluate_final_answer(**inputs_kwargs) # List of dict as output
+                results = []
+                for resp in responses:
+                    decision = resp.get("decision", 0.1)
+                    if decision == False:
+                        decision = 0.1
+                    confidence = resp.get("confidence", 0.0)
+                    score = decision * confidence
+                    results.append(score)
+                assert len(results) == len(question)
+            except Exception as e:
+                error_msg = f"Evaluation execution failed: {e}"
+                logger.error(f"[EvaluatorAgent] {error_msg}")
+                return {"error": error_msg}, {"metric/status": "execution_error"}
+        elif evaluate_fn == "judge_answer":
+            user_question = parameters.get("user_question", [])
+            if isinstance(user_question, str):
+                user_question = [user_question]
+            system_answer = parameters.get("system_answer", [])
+            if isinstance(system_answer, str):
+                system_answer = [system_answer]
+            assert len(user_question) == len(system_answer), "'user_question' and 'system_answer' must be lists of the same length."
+            correct_answer = parameters.get("correct_answer", None)
+            if isinstance(correct_answer, str):
+                correct_answer = [correct_answer]
+            if correct_answer:
+                assert len(correct_answer) == len(user_question), "'correct_answer' must be a list of the same length as 'user_question' if provided."
+            
+            inputs_kwargs = parameters.get("run_kwargs", {})
+            inputs_kwargs = kwargs.update({
+                "user_question": user_question,
+                "system_answer": system_answer,
+                "correct_answer": correct_answer,
+            })
+            # update inputs_kwargs with kwargs
+            inputs_kwargs.update(kwargs)
+            try:
+                results = self.agent.judge_answer(**inputs_kwargs) # List of float as output
+                assert len(results) == len(user_question)
+            except Exception as e:
+                error_msg = f"Evaluation execution failed: {e}"
+                logger.error(f"[EvaluatorAgent] {error_msg}")
+                return {"error": error_msg}, {"metric/status": "execution_error"}
+        elif evaluate_fn == "evaluate_path":
+            main_question = parameters.get("main_question", [])
+            if isinstance(main_question, str):
+                main_question = [main_question]
+            reasoning_path = parameters.get("reasoning_path", [])
+            if isinstance(reasoning_path, str):
+                reasoning_path = [reasoning_path]
+            ground_truth_answer = parameters.get("ground_truth_answer", [])
+            if isinstance(ground_truth_answer, str):
+                ground_truth_answer = [ground_truth_answer]
+            assert len(main_question) == len(reasoning_path) == len(ground_truth_answer), "'main_question', 'reasoning_path', and 'ground_truth_answer' must be lists of the same length."
+            inputs_kwargs = parameters.get("run_kwargs", {})
+            inputs_kwargs = kwargs.update({
+                "main_question": main_question,
+                "reasoning_path": reasoning_path,
+                "ground_truth_answer": ground_truth_answer,
+            })
+            # update inputs_kwargs with kwargs
+            inputs_kwargs.update(kwargs)
+            try:
+                results = self.agent.evaluate_path(**inputs_kwargs)
+                assert len(results) == len(main_question)
+            except Exception as e:
+                error_msg = f"Evaluation execution failed: {e}"
+                logger.error(f"[EvaluatorAgent] {error_msg}")
+                return {"error": error_msg}, {"metric/status": "execution_error"}
+        else:
+            error_msg = f"Error: 'evaluate_fn' is missing or invalid in parameters. Received: {parameters}"
+            logger.error(f"[EvaluatorAgent] {error_msg}")
+            return {"error": error_msg}, {"metric/status": "invalid_parameters"}
+        
 
 if __name__=='__main__':
     import asyncio

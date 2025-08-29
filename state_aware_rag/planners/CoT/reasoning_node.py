@@ -8,11 +8,11 @@ import tqdm
 import pprint
 from anytree import NodeMixin
 
-from planners.CoT.backbone import Node
-from agents.roles.generator import Generator
-from agents.roles.evaluator import Evaluator
-from agents.roles.extractor import Extractor
-from agents.retriever_agents import RetrieverAgent
+from state_aware_rag.planners.CoT.backbone import Node
+from state_aware_rag.agents.roles.generator import Generator
+from state_aware_rag.agents.roles.evaluator import Evaluator
+from state_aware_rag.agents.roles.extractor import Extractor
+from state_aware_rag.agents.retriever_agents import RetrieverAgent
 
 @unique
 class NodeType(Enum):

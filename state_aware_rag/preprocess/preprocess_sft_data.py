@@ -2,9 +2,10 @@ from collections import Counter
 import os
 import datasets
 import tqdm
-from agents.prompts.extract import EXTRACT_PROMPT, ExtractOutput
-from preprocess.utils import process_extractor_data_from_cache
-from preprocess.minhash import dedup
+
+from state_aware_rag.agents.prompts.extract import EXTRACT_PROMPT, ExtractOutput
+from state_aware_rag.preprocess.utils import process_extractor_data_from_cache
+from state_aware_rag.preprocess.minhash import dedup
 
 def create_full_content(example):
     content = example['content']

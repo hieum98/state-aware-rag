@@ -10,10 +10,10 @@ from uuid import uuid4
 import ray
 from verl.utils.rollout_trace import rollout_trace_op
 
-from agents.retriever_agents import RetrieverAgent
-from agents.roles.generator import Generator
-from agents.roles.extractor import Extractor
-from agents.roles.evaluator import Evaluator
+from state_aware_rag.agents.retriever_agents import RetrieverAgent
+from state_aware_rag.agents.roles.generator import Generator
+from state_aware_rag.agents.roles.extractor import Extractor
+from state_aware_rag.agents.roles.evaluator import Evaluator
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOGGING_LEVEL", "WARN"))
@@ -54,36 +54,37 @@ class TokenBucketWorker:
 
 
 class AgentExecutionWorker:
-    """Worker for executing agent operations with optional rate limiting."""
+    """Deprecated: Previously executed callables under a global rate limit.
+
+    Keeping the class for backward compatibility, but we no longer pass
+    bound methods into Ray to avoid serialization issues with locks.
+    """
 
     def __init__(self, enable_global_rate_limit=True, rate_limit=10):
-        self.rate_limit_worker = self._init_rate_limit(rate_limit) if enable_global_rate_limit else None
-
-    def _init_rate_limit(self, rate_limit):
-        """Initialize singleton rate limiter."""
-        return TokenBucketWorker.options(name="rate-limiter", get_if_exists=True).remote(rate_limit)
+        self.rate_limit_worker = (
+            TokenBucketWorker.options(name="rate-limiter", get_if_exists=True).remote(rate_limit)
+            if enable_global_rate_limit
+            else None
+        )
 
     def ping(self):
-        """Health check method."""
         return True
 
+    # NOTE: Do not use this in new code; execute bound functions locally instead.
     def execute(self, fn: Callable[..., T], *fn_args, **fn_kwargs) -> T:
-        """Execute function with optional rate limiting."""
         if self.rate_limit_worker:
             with ExitStack() as stack:
                 stack.callback(self.rate_limit_worker.release.remote)
                 ray.get(self.rate_limit_worker.acquire.remote())
-                try:
-                    return fn(*fn_args, **fn_kwargs)
-                except Exception as e:
-                    # TODO we should make this available to the tool caller
-                    logger.warning(f"Error when executing search: {e}")
-        else:
-            return fn(*fn_args, **fn_kwargs)
-    
-        
+                return fn(*fn_args, **fn_kwargs)
+        return fn(*fn_args, **fn_kwargs)
+
+
 def init_agent_execution_pool(num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode):
-    """Initialize execution pool."""
+    """Initialize the (legacy) execution pool actor.
+
+    New code should not rely on this actor for executing callables.
+    """
     if mode == PoolMode.ThreadMode:
         return (
             ray.remote(AgentExecutionWorker)
@@ -104,11 +105,11 @@ class BaseAgent:
         self.rate_limit = config.get("rate_limit", 120)
         self.timeout = config.get("timeout", 30)
         self.enable_global_rate_limit = config.get("enable_global_rate_limit", True)
-        self.execution_pool = init_agent_execution_pool(
-            num_workers=self.num_workers,
-            enable_global_rate_limit=self.enable_global_rate_limit,
-            rate_limit=self.rate_limit,
-            mode=PoolMode.ThreadMode,
+        # Global rate limiter actor (shared by name across processes)
+        self.rate_limit_worker = (
+            TokenBucketWorker.options(name="rate-limiter", get_if_exists=True).remote(self.rate_limit)
+            if self.enable_global_rate_limit
+            else None
         )
 
         self._instance_dict: Dict[str, Dict[str, Any]] = {}
@@ -149,9 +150,17 @@ class BaseAgent:
         """
         timeout = self.timeout
         try:
-            results, metadata = await self.execution_pool.execute.remote(
-                self.run, instance_id, parameters, timeout=timeout
-            )
+            # Acquire global token if enabled, then execute locally to avoid
+            # sending bound methods (which may capture locks) to Ray.
+            if self.rate_limit_worker:
+                with ExitStack() as stack:
+                    stack.callback(self.rate_limit_worker.release.remote)
+                    # Block until we get a token
+                    ray.get(self.rate_limit_worker.acquire.remote())
+                    results, metadata = self.run(instance_id, parameters, timeout=timeout, **kwargs)
+            else:
+                results, metadata = self.run(instance_id, parameters, timeout=timeout, **kwargs)
+
             self._instance_dict[instance_id] = {
                 "results": results,
                 "metadata": metadata,
@@ -202,20 +211,6 @@ class RetrievalAgent(BaseAgent):
             )
 
     def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
-        """Run the retrieval agent.
-        Args:
-            instance_id: The instance id of the agent.
-            parameters: The parameters for the agent.
-                - retrieval_query_list: List[str], the list of queries to retrieve documents for.
-                - top_k: int, the number of top documents to retrieve for each query. If not provided, use the default top_k from config.
-                - instruction: Optional[str], an optional instruction to guide the retrieval.
-        Returns:
-            results: dict, the retrieval results.
-                - retrieval_docs: List[List[str]], the list of retrieved documents for each query.
-                - retrieval_urls: List[List[str]], the list of URLs for each retrieved document.
-                - retrieval_ids: List[List[str]], the list of IDs for each retrieved document. 
-            metadata: dict, the metadata for the retrieval.
-        """
         retrieval_query_list = parameters.get("retrieval_query_list", [])
         if isinstance(retrieval_query_list, str):
             retrieval_query_list = [retrieval_query_list]
@@ -319,9 +314,9 @@ class GeneratorAgent(BaseAgent):
             return {"error": error_msg}, {"metric/status": "invalid_parameters"}
         
         question_list = parameters.get("question_list", [])
-        if isinstance(questions, str):
-            questions = [questions]
-        if not questions or not isinstance(questions, list):
+        if isinstance(question_list, str):
+            question_list = [question_list]
+        if not question_list or not isinstance(question_list, list):
             error_msg = "Error: 'questions' is missing, empty, or not a list in parameters."
             logger.error(f"[GeneratorAgent] {error_msg} Received parameters: {parameters}")
             return {"error": error_msg}, {"metric/status": "invalid_parameters"}
@@ -345,13 +340,14 @@ class GeneratorAgent(BaseAgent):
                 logger.error(f"[GeneratorAgent] {error_msg} Received parameters: {parameters}")
                 return {"error": error_msg}, {"metric/status": "invalid_parameters"}
         
-        inputs_kwargs = parameters.get("run_kwargs", {})
-        inputs_kwargs = kwargs.update({
+        inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+        # Explicitly add fields expected by role methods
+        inputs_kwargs.update({
             "question": question_list,
             "context": context_list,
             "current_answer": current_answer_list,
         })
-        # update inputs_kwargs with kwargs
+        # Allow top-level kwargs to override
         inputs_kwargs.update(kwargs)
         
         try:
@@ -429,12 +425,11 @@ class ExtractorAgent(BaseAgent):
             logger.error(f"[ExtractorAgent] {error_msg} Received parameters: {parameters}")
             return {"error": error_msg}, {"metric/status": "invalid_parameters"}
         
-        inputs_kwargs = parameters.get("run_kwargs", {})
-        inputs_kwargs = kwargs.update({
+        inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+        inputs_kwargs.update({
             "question": question,
             "document": document,
         })
-        # update inputs_kwargs with kwargs
         inputs_kwargs.update(kwargs)
         
         try:
@@ -465,7 +460,8 @@ class ExtractorAgent(BaseAgent):
                 metadata["metric/status"] = "mismatch_results"
                 return {"extracted_info": None}, metadata
         results = {
-            "extracted_info": extracted_info,
+            "input": question,
+            "extracted_info": responses,
             "is_batch": is_batch,
         }
         metadata["api_response"] = responses
@@ -495,6 +491,7 @@ class EvaluatorAgent(BaseAgent):
 
     def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
         evaluate_fn = parameters.pop("evaluate_fn", None)
+        metadata: Dict[str, Any] = {"metric/status": "unknown"}
         
         if evaluate_fn == "evaluate_final_answer":
             question = parameters.get("question", [])
@@ -507,13 +504,12 @@ class EvaluatorAgent(BaseAgent):
             if isinstance(predicted_answer, str):
                 predicted_answer = [predicted_answer]
             assert len(question) == len(correct_answer) == len(predicted_answer), "'question', 'correct_answer', and 'predicted_answer' must be lists of the same length."
-            inputs_kwargs = parameters.get("run_kwargs", {})
-            inputs_kwargs = kwargs.update({
+            inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+            inputs_kwargs.update({
                 "question": question,
                 "correct_answer": correct_answer,
                 "predicted_answer": predicted_answer,
             })
-            # update inputs_kwargs with kwargs
             inputs_kwargs.update(kwargs)
             try:
                 responses = self.agent.evaluate_final_answer(**inputs_kwargs) # List of dict as output
@@ -526,6 +522,11 @@ class EvaluatorAgent(BaseAgent):
                     score = decision * confidence
                     results.append(score)
                 assert len(results) == len(question)
+                metadata.update({
+                    "metric/status": "success",
+                    "metric/question_count": len(question),
+                })
+                return results, metadata
             except Exception as e:
                 error_msg = f"Evaluation execution failed: {e}"
                 logger.error(f"[EvaluatorAgent] {error_msg}")
@@ -544,17 +545,21 @@ class EvaluatorAgent(BaseAgent):
             if correct_answer:
                 assert len(correct_answer) == len(user_question), "'correct_answer' must be a list of the same length as 'user_question' if provided."
             
-            inputs_kwargs = parameters.get("run_kwargs", {})
-            inputs_kwargs = kwargs.update({
+            inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+            inputs_kwargs.update({
                 "user_question": user_question,
                 "system_answer": system_answer,
                 "correct_answer": correct_answer,
             })
-            # update inputs_kwargs with kwargs
             inputs_kwargs.update(kwargs)
             try:
                 results = self.agent.judge_answer(**inputs_kwargs) # List of float as output
                 assert len(results) == len(user_question)
+                metadata.update({
+                    "metric/status": "success",
+                    "metric/question_count": len(user_question),
+                })
+                return results, metadata
             except Exception as e:
                 error_msg = f"Evaluation execution failed: {e}"
                 logger.error(f"[EvaluatorAgent] {error_msg}")
@@ -570,17 +575,21 @@ class EvaluatorAgent(BaseAgent):
             if isinstance(ground_truth_answer, str):
                 ground_truth_answer = [ground_truth_answer]
             assert len(main_question) == len(reasoning_path) == len(ground_truth_answer), "'main_question', 'reasoning_path', and 'ground_truth_answer' must be lists of the same length."
-            inputs_kwargs = parameters.get("run_kwargs", {})
-            inputs_kwargs = kwargs.update({
+            inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+            inputs_kwargs.update({
                 "main_question": main_question,
                 "reasoning_path": reasoning_path,
                 "ground_truth_answer": ground_truth_answer,
             })
-            # update inputs_kwargs with kwargs
             inputs_kwargs.update(kwargs)
             try:
                 results = self.agent.evaluate_path(**inputs_kwargs)
                 assert len(results) == len(main_question)
+                metadata.update({
+                    "metric/status": "success",
+                    "metric/question_count": len(main_question),
+                })
+                return results, metadata
             except Exception as e:
                 error_msg = f"Evaluation execution failed: {e}"
                 logger.error(f"[EvaluatorAgent] {error_msg}")

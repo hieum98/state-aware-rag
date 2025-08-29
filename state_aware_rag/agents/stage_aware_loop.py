@@ -10,10 +10,10 @@ from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutp
 from verl.utils.profiler import simple_timer
 from vllm.reasoning.qwen3_reasoning_parser import Qwen3ReasoningParser
 
-from agents.prompts.decompose_and_answer import AnswerOutput, SubquestionOutput
-from agents.prompts.extract import ExtractOutput
-from agents.agents import GeneratorAgent, RetrievalAgent, EvaluatorAgent
-from agents.utils import format_reasoning_trace, format_memory, format_context, format_extractor_messages, extract_info_from_text, format_reflection_context
+from state_aware_rag.agents.prompts.decompose_and_answer import AnswerOutput, SubquestionOutput
+from state_aware_rag.agents.prompts.extract import ExtractOutput
+from state_aware_rag.agents.agents import GeneratorAgent, RetrievalAgent, EvaluatorAgent
+from state_aware_rag.agents.utils import format_reasoning_trace, format_memory, format_context, format_extractor_messages, extract_info_from_text, format_reflection_context
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -162,6 +162,7 @@ class StageAwareLoop(AgentLoopBase):
         
         # Compute the Reward for the trajectory
         reward_tasks = []
+        is_outcome_aware = False
         # Outcome-aware reward
         if final_answer and correct_answer:
             reward_tasks.append(self._evaluate_final_answer(question, final_answer, correct_answer, evaluator_kwargs))
@@ -201,7 +202,7 @@ class StageAwareLoop(AgentLoopBase):
         all_response_logprobs = [logprobs[:self.response_length] if logprobs else None for logprobs in all_response_logprobs]
         all_outputs = []
         for i in range(len(all_prompt_ids)):
-            output.append(AgentLoopOutput(
+            all_outputs.append(AgentLoopOutput(
                 prompt_ids=all_prompt_ids[i],
                 response_ids=all_response_ids[i],
                 response_mask=all_response_masks[i],

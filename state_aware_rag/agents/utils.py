@@ -1,6 +1,6 @@
 import re
 from typing import List, Union
-from agents.prompts import extract
+from state_aware_rag.agents.prompts import extract
 
 
 def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
@@ -16,7 +16,7 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
             if match:
                 extracted_info[key] = match.group(1)
             else:
-                extracted_info[key] = None
+                extracted_info[key] = "" # default to empty string if not found
         elif vtype == 'bool':
             # When the value is a boolean, we can use regex to extract the value in the format of "key": true/false
             pattern = rf'"{key}":\s*(true|false)'
@@ -24,7 +24,7 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
             if match:
                 extracted_info[key] = match.group(1) == 'true'
             else:
-                extracted_info[key] = None
+                extracted_info[key] = False # default to False if not found
         elif vtype in ['int', 'float']:
             # When the value is a number, we can use regex to extract the value in the format of "key": number
             pattern = rf'"{key}":\s*([-+]?\d*\.?\d+)'
@@ -35,7 +35,7 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
                 else:
                     extracted_info[key] = float(match.group(1))
             else:
-                extracted_info[key] = None
+                extracted_info[key] = 0 # default to 0 if not found
         elif vtype in ['List', 'list']:
             # When the value is a list, we can use regex to extract the value in the format of "key": [value1, value2, ...]
             pattern = rf'"{key}":\s*\[(.*?)\]'

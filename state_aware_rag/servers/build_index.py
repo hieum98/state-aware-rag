@@ -6,7 +6,7 @@ from openai import OpenAI
 import numpy as np
 import torch
 
-from preprocess.utils import simple_preprocess
+from state_aware_rag.preprocess.utils import simple_preprocess
 
 
 if __name__ == "__main__":

@@ -7,13 +7,12 @@ from argparse import ArgumentParser
 from transformers import HfArgumentParser
 from types import SimpleNamespace
 
-from agents.roles.evaluator import Evaluator
-from agents.roles.extractor import Extractor
-from agents.roles.generator import Generator
-from agents.retriever_agents import RetrieverAgent
-from planners.MCTS.utils import clear_agent_cache 
-import planners
-from preprocess.utils import simple_preprocess
+from state_aware_rag.agents.roles.evaluator import Evaluator
+from state_aware_rag.agents.roles.extractor import Extractor
+from state_aware_rag.agents.roles.generator import Generator
+from state_aware_rag.agents.retriever_agents import RetrieverAgent
+from state_aware_rag.planners.MCTS.utils import clear_agent_cache 
+from state_aware_rag.preprocess.utils import simple_preprocess
 from args import SearchArguments, GenerationArguments, RetrieverArguments, LLMAgentArguments
 
 # Per-process lazy state for workers
@@ -100,10 +99,11 @@ def generate_answer(
         config: Optional[SearchArguments] = None,
     ):
     if use_mcts:
-        from planners.MCTS.utils import search
+        # Use absolute import so running as module works
+        from state_aware_rag.planners.MCTS.utils import search
     else:
         assert use_cot, "Either MCTS or CoT must be used for inference."
-        from  planners.CoT.utils import search
+        from state_aware_rag.planners.CoT.utils import search
     final_answer, final_reasoning, reasoning_paths = search(
         generator=generator,
         evaluator=evaluator,
@@ -129,7 +129,7 @@ def generate_answer(
     }
 
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser(description="Run MCTS inference for question answering.")
     parser.add_argument("--question", type=str, default=None, help="The question to answer.")
     parser.add_argument("--data_name", type=str, default=None, help="Name of the dataset to use.")
@@ -346,6 +346,10 @@ if __name__ == "__main__":
         print(f"Results saved to {results_dir}")
     
     # clear_agent_cache(generator, extractor, evaluator)
+
+
+if __name__ == "__main__":
+    main()
 
 
 

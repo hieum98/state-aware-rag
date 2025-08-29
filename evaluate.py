@@ -2,7 +2,7 @@ from typing import List
 import datasets
 import os
 
-from utils.metrics import (
+from state_aware_rag.utils.metrics import (
     ExactMatch, 
     Sub_ExactMatch, 
     F1_Score, 
@@ -87,7 +87,7 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
     return results, data
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     from pprint import pprint
 
@@ -135,4 +135,8 @@ if __name__ == "__main__":
         import json
         json.dump(results, f, indent=4)
     print(f"Evaluation results saved to {path}.")
+
+
+if __name__ == "__main__":
+    main()
 

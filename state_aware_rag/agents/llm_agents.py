@@ -13,7 +13,7 @@ from litellm import completion
 from litellm.utils import supports_response_schema
 from tqdm import tqdm
 
-from agents.utils import convert_confidence_to_score, extract_info_from_text
+from state_aware_rag.agents.utils import convert_confidence_to_score, extract_info_from_text
 
 litellm.drop_params=True
 
@@ -77,7 +77,8 @@ class ModelClient:
                 attempts += 1
                 # slightly adjust params to shake the sampler
                 model_kwargs['top_k'] = model_kwargs.get('top_k', 20) + 2 # Increase top_k to encourage more diverse sampling
-                model_kwargs['top_p'] = max(model_kwargs.get('top_p', 0.8) + 0.02, 1.0)
+                # Nudge top_p upward but never exceed 1.0
+                model_kwargs['top_p'] = min(model_kwargs.get('top_p', 0.8) + 0.02, 1.0)
                 if 'claude' not in self.model_name and self.reasoning_effort is None:
                     model_kwargs['temperature'] = min(1.2, model_kwargs.get('temperature', 0.7) + 0.1) # Increase temperature to encourage more diverse sampling
                 continue
@@ -128,19 +129,20 @@ class ModelClient:
         outputs = sorted(outputs, key=lambda x: x[0])
         return [output[1] for output in outputs]
 
+
 class LiteLLMClient(ModelClient):
     def __init__(
-            self, 
-            model_name: str,
-            url: str, 
-            api_key: Union[str, None] = None,
-            concurrency: int = 64,
-            **generate_kwargs: Dict[str, Any]
-            ):
+        self,
+        model_name: str,
+        url: str,
+        api_key: Union[str, None] = None,
+        concurrency: int = 64,
+        **generate_kwargs: Dict[str, Any],
+    ):
         super().__init__(model_name, url, api_key, concurrency, **generate_kwargs)
         self.structure_output_supported = supports_response_schema(model_name)
         print(f"Calling API via LiteLLM with model {self.model_name} at {self.url}")
-    
+
     def prepare_model_kwargs(self, **kwargs):
         reasoning_effort = kwargs.get('reasoning_effort', self.reasoning_effort)
         output_schema = kwargs.get('output_schema', None)
@@ -154,30 +156,27 @@ class LiteLLMClient(ModelClient):
             temperature = 1.0
         else:
             temperature = kwargs.get('temperature', self.temperature)
-            
+
         model_kwargs = {
             'model': self.model_name,
             'temperature': temperature,
             'max_tokens': kwargs.get('max_tokens', self.max_tokens),
-            "top_p": kwargs.get('top_p', self.top_p) if reasoning_effort is None else None,
+            'top_p': kwargs.get('top_p', self.top_p) if reasoning_effort is None else None,
             'n': kwargs.get('n', self.num_samples),
-            "top_k": kwargs.get('top_k', self.top_k) if reasoning_effort is None else None,
-            "api_key": self.api_key,
-            "base_url": self.url,
-            "response_format": output_schema,
+            'top_k': kwargs.get('top_k', self.top_k) if reasoning_effort is None else None,
+            'api_key': self.api_key,
+            'base_url': self.url,
+            'response_format': output_schema,
             'reasoning_effort': reasoning_effort,
             'aws_profile_name': kwargs.get('aws_profile_name', self.aws_profile_name),
             'seed': kwargs.get('random_seed', self.random_seed),
         }
         return model_kwargs
-    
+
     def completion(self, messages: List[Dict[str, str]], **kwargs):
         assert isinstance(messages, list), "Messages must be a list of dictionaries with 'role' and 'content' keys."
-        response = completion(
-            messages=messages,
-            timeout=1200, # Increase timeout for large models
-            **kwargs
-        )
+        assert completion is not None, "litellm is required for LiteLLMClient but is not installed."
+        response = completion(messages=messages, timeout=1200, **kwargs)  # type: ignore
         return response
 
 
@@ -192,7 +191,11 @@ class OpenAIClient(ModelClient):
         ):
         super().__init__(model_name, url, api_key, concurrency, **generate_kwargs)
         self.structure_output_supported = True # OpenAI supports structured output
-        self.client = openai.Client(base_url=self.url, api_key=self.api_key)
+        # Support both modern and legacy OpenAI client entrypoints
+        try:
+            self.client = openai.OpenAI(base_url=self.url, api_key=self.api_key)  # type: ignore[attr-defined]
+        except Exception:
+            self.client = openai.Client(base_url=self.url, api_key=self.api_key)  # type: ignore[attr-defined]
         print(f"Calling OpenAI API with model {self.model_name} at {self.url}")
     
     def prepare_model_kwargs(self, **kwargs):
@@ -289,8 +292,8 @@ class LLMAgent:
                             item['output'] = output_schema.model_validate(item['output'])
                         except Exception:
                             pass
-        except Exception:
-            raise "[Warning] Error loading cache file {}".format(cache_file)
+        except Exception as e:
+            raise RuntimeError(f"[Warning] Error loading cache file {cache_file}: {e}")
         return data
     
     def generate(self, input_args, **kwargs):
@@ -389,13 +392,11 @@ class LLMAgent:
                         extracted_info = extract_info_from_text(output_object, keys, value_types)
                     except Exception:
                         extracted_info = {'output': output_object}
-                if 'confidence' in extracted_info:
-                    extracted_info['confidence'] = convert_confidence_to_score(extracted_info['confidence'])
                 results.append(extracted_info)
             batch_results.append(results)
         if len(batch_results) == 1:
             return batch_results[0]
-        return [x[0] for x in batch_results]  # Return the first result of each batch due to n always being 1 when batch_size > 1
+        return [ (x[0] if x else {}) for x in batch_results ]
             
 
 if __name__ == "__main__":

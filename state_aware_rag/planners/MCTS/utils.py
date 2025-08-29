@@ -10,9 +10,9 @@ import tqdm
 from colorama import Fore, Style
 from anytree import RenderTree
 
-from preprocess.utils import simple_preprocess
-from planners.MCTS.backbone import MCTS
-from planners.MCTS.reasoning_node import *
+from state_aware_rag.preprocess.utils import simple_preprocess
+from state_aware_rag.planners.MCTS.backbone import MCTS
+from state_aware_rag.planners.MCTS.reasoning_node import *
 
 # Modified from https://vscode.dev/github/zhentingqi/rStar/blob/main/run_src/rstar_utils.py#L60-L120
 def print_tree_from_root(root_node: ReasoningNode):

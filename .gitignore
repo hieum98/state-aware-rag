@@ -17,3 +17,4 @@ wandb
 cot_cache
 cot_data
 finetune/sft/Qwen3-SFT.sh
+state_aware_rag.egg-info

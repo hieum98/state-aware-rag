@@ -10,7 +10,7 @@ import warnings
 from collections import Counter, defaultdict
 import pydantic
 import tqdm
-from preprocess.utils import normalize_text
+from state_aware_rag.preprocess.utils import normalize_text
 
 
 class BaseMetric:

@@ -3,10 +3,10 @@ import time
 from typing import Any, Dict, List, Optional, Union
 import pydantic
 
-from agents.llm_agents import LLMAgent
-from agents.prompts import evaluate
-from agents.utils import extract_info_from_text
-from preprocess.utils import normalize_text
+from state_aware_rag.agents.llm_agents import LLMAgent
+from state_aware_rag.agents.prompts import evaluate
+from state_aware_rag.agents.utils import extract_info_from_text
+from state_aware_rag.preprocess.utils import normalize_text
 
 
 class Evaluator(LLMAgent):

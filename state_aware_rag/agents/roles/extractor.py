@@ -58,17 +58,14 @@ class Extractor(LLMAgent):
         kwargs['output_schema'] = extract.ExtractOutput
         kwargs['any_other_info'] = addtional_info
         responses = self.role_execute(batch, **kwargs)
-        extracted_info = []
+        extracted_info: List[extract.ExtractOutput] = []
         for response in responses:
             decision = response['decision']
             decision = decision if decision == 'relevant' else 'not_relevant'
-            try:
-                if isinstance(response['information'], list):
-                    info = response['information']
-                else:
-                    info = [response['information']]
-            except:
-                info = [response['information']]
+            if isinstance(response['information'], list):
+                info = response['information']
+            else:
+                info = [str(response['information'])]
             output = extract.ExtractOutput(
                 information=info,
                 decision=decision,
@@ -77,24 +74,13 @@ class Extractor(LLMAgent):
             extracted_info.append(output)
         if len(question) == 1 and len(extracted_info) > 1:
             # Collect decisions from pydantic models
-            decision = [
-                (x.decision if isinstance(x, pydantic.BaseModel) else x.get('decision'))
-                for x in extracted_info
-            ]
+            decision = [item.decision for item in extracted_info]
             # If any decision is 'relevant', we return 'relevant'
             if 'relevant' in decision:
                 decision = 'relevant'
                 all_info: List[str] = []
                 for item in extracted_info:
-                    # Support both BaseModel and dict styles (for robustness)
-                    if isinstance(item, pydantic.BaseModel):
-                        info_value = item.information
-                    else:
-                        info_value = item.get('information', [])
-                    if isinstance(info_value, list):
-                        all_info.extend(info_value)
-                    elif isinstance(info_value, str):
-                        all_info.append(info_value)
+                    all_info.extend(item.information)
                 # Deduplicate 
                 all_info = list(set(all_info))
                 output = extract.ExtractOutput(

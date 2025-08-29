@@ -14,6 +14,7 @@ from state_aware_rag.agents.retriever_agents import RetrieverAgent
 from state_aware_rag.agents.roles.generator import Generator
 from state_aware_rag.agents.roles.extractor import Extractor
 from state_aware_rag.agents.roles.evaluator import Evaluator
+from state_aware_rag.agents.utils import convert_confidence_to_score
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOGGING_LEVEL", "WARN"))
@@ -487,6 +488,7 @@ class EvaluatorAgent(BaseAgent):
             generate_kwargs=self.generation_config,
             use_cache=self.use_cache,
             cache_dir=self.cache_dir,
+            verbose = config.get("verbose", False),
         )
 
     def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
@@ -518,7 +520,8 @@ class EvaluatorAgent(BaseAgent):
                     decision = resp.get("decision", 0.1)
                     if decision == False:
                         decision = 0.1
-                    confidence = resp.get("confidence", 0.0)
+                    confidence = resp.get("confidence", "low")
+                    confidence = convert_confidence_to_score(confidence)
                     score = decision * confidence
                     results.append(score)
                 assert len(results) == len(question)

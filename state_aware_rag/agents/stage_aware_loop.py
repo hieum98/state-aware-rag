@@ -121,7 +121,7 @@ class StageAwareLoop(AgentLoopBase):
             
             # Step 4: Subanswer generation
             with simple_timer('subanswer_generation', metrics):
-                sub_answer = await self._subanswer_generation(sub_question, all_extractions, memory_data, reasoning_traces, generator_kwargs)
+                sub_answer = await self._subanswer_generation(sub_question, all_extractions, memory_data, reasoning_traces, generator_kwargs, answerable=answerable)
             if answerable and sub_answer != "Answer generation failed." and sub_answer.strip():
                 # If the main question is answerable, return the answer
                 final_answer = sub_answer
@@ -340,11 +340,12 @@ class StageAwareLoop(AgentLoopBase):
         reasoning_trace = format_reasoning_trace(reasoning_trace)
         explored_data = format_memory(explored_data)
         context = format_context(memory, reasoning_trace, explored_data)
+        answerable = kwargs.get("answerable", False)
         try:
             kwargs = agent_kwargs.get("generator_agent", {})
             instance_id, _ = await self.generator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
             parameters = {
-                "generate_fn": "generate_answer",
+                "generate_fn": "generate_answer" if not answerable else "finalize",
                 "question_list": [question],
                 "context_list": [context],
                 "run_kwargs": kwargs.get("run_kwargs", {}),

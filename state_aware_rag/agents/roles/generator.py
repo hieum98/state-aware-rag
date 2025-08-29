@@ -10,8 +10,6 @@ from state_aware_rag.agents.prompts import (
     self_correct,
     rephase_question,
     )
-from state_aware_rag.agents.utils import convert_score_to_confidence
-from typing import Tuple
 
 
 class Generator(LLMAgent):
@@ -83,7 +81,8 @@ class Generator(LLMAgent):
             reasoning = x.get('reasoning', "")
             detailed_answer = x.get('detailed_answer', "")
             answer = x.get('answer', "")
-            confidence = convert_score_to_confidence(x.get('confidence', None))
+            confidence = x.get('confidence', "low")
+            confidence = confidence if confidence else "low"
             assert answer or detailed_answer, "Either answer or detailed_answer must be provided."
             if not answer and detailed_answer:
                 answer = detailed_answer
@@ -201,7 +200,8 @@ class Generator(LLMAgent):
             if not synthesis:
                 answerable_main_question = False
             reasoning = x.get('reasoning', "")
-            confidence = convert_score_to_confidence(x.get('confidence', None))
+            confidence = x.get('confidence', None)
+            confidence = confidence if confidence else "low"
             assert synthesis, "Synthesis must be provided."
             all_results.append(
                 synthesize.SynthesizeOutput(
@@ -260,7 +260,8 @@ class Generator(LLMAgent):
             if not detailed_final_answer and final_answer:
                 detailed_final_answer = final_answer # If detailed_final_answer is empty, use final_answer as detailed_final_answer
             reasoning = x.get('reasoning', "")
-            confidence = convert_score_to_confidence(x.get('confidence', None))
+            confidence = x.get('confidence', None)
+            confidence = confidence if confidence else "low"
             all_results.append(
                 finalize.FinalizeOutput(
                     answer=final_answer,
@@ -319,7 +320,9 @@ class Generator(LLMAgent):
             reanswer = x.get('reanswer', "")
             reasoning = x.get('reasoning', "")
             verification_status = x.get('verification_status', "UNSUPPORTED")
-            confidence = convert_score_to_confidence(x.get('confidence', None))
+            verification_status = verification_status if verification_status else "UNSUPPORTED"
+            confidence = x.get('confidence', None)
+            confidence = confidence if confidence else "low"
             assert reasoning or reanswer, "Either reasoning or reanswer must be provided."
             if not reanswer and reasoning:
                 reanswer = reasoning # If reanswer is empty, use reasoning as reanswer
@@ -418,13 +421,13 @@ class Generator(LLMAgent):
                     queries = [q.strip().strip('"') for q in queries]
                     # Remove empty queries
                     queries = [q for q in queries if q]
-                item['queries'] = queries
+                assert queries, "Queries must be provided."
+                reasoning = item.get('reasoning', "")
                 output.append(
-                    decompose_and_answer.QueriesGenerationOutput(queries=item['queries'], reasoning=None)
+                    decompose_and_answer.QueriesGenerationOutput(queries=queries, reasoning=reasoning)
                 )
         if not output:
             print("Empty response from the model. Please check!")
-            breakpoint()
         return output
 
 if __name__ == "__main__":

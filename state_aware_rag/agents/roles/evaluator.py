@@ -5,7 +5,7 @@ import pydantic
 
 from state_aware_rag.agents.llm_agents import LLMAgent
 from state_aware_rag.agents.prompts import evaluate
-from state_aware_rag.agents.utils import extract_info_from_text
+from state_aware_rag.agents.utils import convert_confidence_to_score, convert_score_to_confidence
 from state_aware_rag.preprocess.utils import normalize_text
 
 
@@ -83,18 +83,22 @@ class Evaluator(LLMAgent):
             print("Predicted Answers:", predicted_answer)
         kwargs['output_schema'] = evaluate.EvaluateAnswerOutput
         responses = self.role_execute(batch, **kwargs)
+        if self.verbose:
+            print("Raw Responses:", responses)
         if len(question) == 1 and len(responses) > 1:
             # Majority vote
             decision = [res.get('decision', False) for res in responses]
-            confidence = [res.get('confidence', 0.1) for res in responses]
+            confidence = [res.get('confidence', 'low') for res in responses]
+            confidence = [convert_confidence_to_score(c) for c in confidence]
             decision = sum(decision) / len(decision) if len(decision) > 0 else 0.0
             confidence = sum(confidence) / len(confidence) if len(confidence) > 0 else 0.1
+            confidence = convert_score_to_confidence(confidence)
             decision = decision >= 0.5
             return [{'decision': decision, 'confidence': confidence}]
         results = []
         for response in responses:
             score = response.get('decision', False) 
-            conf = response.get('confidence', 0.1)
+            conf = response.get('confidence', "low")
             results.append({'decision': score, 'confidence': conf})
         return results
     
@@ -134,7 +138,7 @@ class Evaluator(LLMAgent):
         response = self.role_execute(batch, **kwargs)
         results = []
         for res in response:
-            score = res.get('total_rating', 0.0)
+            score = res.get('total_rating', 0.0) / 10.0 # Normalize to [0, 1]
             results.append(score)
         if len(user_question) == 1 and len(results) > 1:
             # Majority vote

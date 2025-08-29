@@ -19,11 +19,8 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 class StageAwareLoop(AgentLoopBase):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-    
     @classmethod
-    def init_class(cls, config, tokenizer, retrieval_config_path, generator_config_path, evaluator_config_path, **kwargs):
+    def init_class(cls, config, tokenizer, retrieval_config_path, generator_config_path, evaluator_config_path, max_interations=5, **kwargs):
         if cls._class_initialized:
             return
 
@@ -31,7 +28,7 @@ class StageAwareLoop(AgentLoopBase):
         cls.apply_chat_template_kwargs = config.data.get("apply_chat_template_kwargs", {})
         cls.prompt_length = config.actor_rollout_ref.rollout.prompt_length
         cls.response_length = config.actor_rollout_ref.rollout.response_length
-        cls.max_iterations = config.actor_rollout_ref.rollout.agent.agent_loop.get("max_iterations", 3)
+        cls.max_iterations = max_interations
 
         if 'qwen3' in config.actor_rollout_ref.model.path.lower():
             cls.model_type = 'qwen3'
@@ -57,7 +54,7 @@ class StageAwareLoop(AgentLoopBase):
         cls._class_initialized = True
         print("Performing class-level StageAwareLoop initialization")
     
-    async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
+    async def run(self, sampling_params: dict[str, Any], **kwargs) -> list[AgentLoopOutput]:
         question = kwargs["raw_prompt"]
         correct_answer = kwargs.get("correct_answer", None)
         assert correct_answer is not None, "correct_answer must be provided in kwargs for reward computation."
@@ -202,18 +199,20 @@ class StageAwareLoop(AgentLoopBase):
         all_response_ids = [ids[:self.response_length] for ids in all_response_ids]
         all_response_masks = [mask[:self.response_length] for mask in all_response_masks]
         all_response_logprobs = [logprobs[:self.response_length] if logprobs else None for logprobs in all_response_logprobs]
-        reward = [reward] * len(all_prompt_ids) # repeat the reward for each (prompt, response) pair
+        all_outputs = []
+        for i in range(len(all_prompt_ids)):
+            output.append(AgentLoopOutput(
+                prompt_ids=all_prompt_ids[i],
+                response_ids=all_response_ids[i],
+                response_mask=all_response_masks[i],
+                response_logprobs=all_response_logprobs[i],
+                multi_modal_data={},
+                num_turns=1,
+                reward_score=reward,
+                metrics=metrics,
+            ))
 
-        return AgentLoopOutput(
-            prompt_ids=all_prompt_ids,
-            response_ids=all_response_ids,
-            response_mask=all_response_masks,
-            response_logprobs=all_response_logprobs,
-            multi_modal_data={},
-            num_turns=2,
-            reward_score=reward,
-            metrics=metrics,
-        )
+        return all_outputs
         
     def parse_extractor_outputs(self, text: str):
         reasoning_txt, output_txt = self.reasoning_parser.extract_reasoning_content(text, None)
@@ -496,17 +495,18 @@ if __name__ == "__main__":
     config.actor_rollout_ref.rollout.mode = "async"
     config.actor_rollout_ref.rollout.prompt_length = 8192
     config.actor_rollout_ref.rollout.response_length = 4096
-    config.actor_rollout_ref.rollout.n = 4
+    config.actor_rollout_ref.rollout.n = 5
     config.actor_rollout_ref.rollout.agent.num_workers = 2
     # Agent loop specific configs
-    config.actor_rollout_ref.rollout.agent.agent_loop.max_iterations = 3
-    config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "configs/train/state_aware_loop.yaml"
+    config.actor_rollout_ref.rollout.agent.agent_loop_config_path = "configs/train/state_aware.yaml"
+
     agent_loop_manager = init_agent_loop_manager(config)
 
     raw_prompts = [
         "What is the capital of France?", 
         "Who is the president of the United States?", 
-        "Which magazine was started first 'Arthur's Magazine' or 'First for Women'?"
+        "Which magazine was started first 'Arthur's Magazine' or 'First for Women'?",
+        "Who wrote the play 'Romeo and Juliet'?"
         ]
     batch = DataProto(
         non_tensor_batch={
@@ -518,7 +518,10 @@ if __name__ == "__main__":
     n = config.actor_rollout_ref.rollout.n
     batch = batch.repeat(n)
     results = agent_loop_manager.generate_sequences(prompts=batch)
-    breakpoint()
+
+    results.print_size()
+    
+    ray.shutdown()
 
     
 

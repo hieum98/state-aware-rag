@@ -398,7 +398,7 @@ class ExtractorAgent(BaseAgent):
         self.client_kwargs = config.get("client_kwargs", None)
         self.generation_config = config.get("generation_config", None)
         self.use_cache = config.get("use_cache", False)
-        model_name = self.generation_config['model_name']
+        model_name = self.client_kwargs['model_name']
         cache_dir = config.get("cache_dir", 'cache/extractor')
         self.cache_dir = os.path.join(cache_dir, model_name)
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."
@@ -480,7 +480,7 @@ class EvaluatorAgent(BaseAgent):
         self.client_kwargs = config.get("client_kwargs", None)
         self.generation_config = config.get("generation_config", None)
         self.use_cache = config.get("use_cache", False)
-        model_name = self.generation_config['model_name']
+        model_name = self.client_kwargs['model_name']
         cache_dir = config.get("cache_dir", 'cache/evaluator')
         self.cache_dir = os.path.join(cache_dir, model_name)
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."

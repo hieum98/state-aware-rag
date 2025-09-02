@@ -22,7 +22,7 @@ def base_config():
     # Load generator config and make it safe for tests (no global rate limiter actor)
     cfg = omegaconf.OmegaConf.load("configs/evaluator.yaml")
     cfg_dict = omegaconf.OmegaConf.to_container(cfg, resolve=True)
-    cfg_dict["enable_global_rate_limit"] = False
+    cfg_dict["enable_global_rate_limit"] = True
     cfg_dict["num_workers"] = 4
     cfg_dict["timeout"] = 30
     cfg_dict["verbose"] = True

@@ -20,7 +20,7 @@ def base_config():
     # Load generator config and make it safe for tests (no global rate limiter actor)
     cfg = omegaconf.OmegaConf.load("configs/retriever.yaml")
     cfg_dict = omegaconf.OmegaConf.to_container(cfg, resolve=True)
-    cfg_dict["enable_global_rate_limit"] = False
+    cfg_dict["enable_global_rate_limit"] = True
     cfg_dict["num_workers"] = 4
     cfg_dict["timeout"] = 30
     cfg_dict["verbose"] = True
@@ -29,7 +29,7 @@ def base_config():
 def test_retrieval(ray_cluster, base_config):
     agent = RetrievalAgent(config=base_config)
     parameters = {
-        "retrieval_query_list": "Who is the president of the United States?",
+        "retrieval_query_list": ["Who is the president of the United States?"]*128,
     }
     
     instance_id, _ = asyncio.run(agent.create())
@@ -37,6 +37,16 @@ def test_retrieval(ray_cluster, base_config):
     print(f"Results: {results}")
     print(f"Metrics: {metrics}")
     print(f"Reward: {reward}")
-    results = results["retrieval_docs"]
-    assert all(isinstance(o, str) for o in results)
+    retrieval_docs = results["retrieval_docs"]
+    if isinstance(parameters["retrieval_query_list"], str):
+        assert len(retrieval_docs) == 1
+        assert len(retrieval_docs[0]) == base_config["top_k"]
+        assert all(isinstance(doc, str) for doc in retrieval_docs[0])
+        assert all(bool(doc) for doc in retrieval_docs[0])  # Ensure no empty strings
+    else:
+        assert len(retrieval_docs) == len(parameters["retrieval_query_list"])
+        for docs in retrieval_docs:
+            assert len(docs) == base_config["top_k"]
+            assert all(isinstance(doc, str) for doc in docs)
+            assert all(bool(doc) for doc in docs)  # Ensure no empty strings
 

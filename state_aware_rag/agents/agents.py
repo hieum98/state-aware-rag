@@ -104,11 +104,12 @@ class BaseAgent:
         # Worker and rate limiting configuration
         self.num_workers = config.get("num_workers", 120)
         self.rate_limit = config.get("rate_limit", 120)
-        self.timeout = config.get("timeout", 30)
+        self.timeout = config.get("timeout", 300)
         self.enable_global_rate_limit = config.get("enable_global_rate_limit", True)
         # Global rate limiter actor (shared by name across processes)
         self.rate_limit_worker = (
-            TokenBucketWorker.options(name="rate-limiter", get_if_exists=True).remote(self.rate_limit)
+            TokenBucketWorker.options(name=f"rate-limiter-{self.name}", 
+                                      get_if_exists=True).remote(self.rate_limit)
             if self.enable_global_rate_limit
             else None
         )
@@ -266,7 +267,7 @@ class RetrievalAgent(BaseAgent):
             all_retrieval_urls = []
             all_retrieval_ids = []
             for docs in retrieval_docs:
-                all_retrieval_docs.append([doc.get("content", "") for doc in docs])
+                all_retrieval_docs.append([doc.get("contents", "") for doc in docs])
                 all_retrieval_urls.append([doc.get("url", "") for doc in docs])
                 all_retrieval_ids.append([doc.get("id", "") for doc in docs])
             results = {
@@ -500,9 +501,13 @@ class EvaluatorAgent(BaseAgent):
             if isinstance(question, str):
                 question = [question]
             correct_answer = parameters.get("correct_answer", [])
+            if correct_answer == []:
+                correct_answer = parameters.get("golen_answer", [])
             if isinstance(correct_answer, str):
                 correct_answer = [correct_answer]
             predicted_answer = parameters.get("predicted_answer", [])
+            if predicted_answer == []:
+                predicted_answer = parameters.get("answer", [])
             if isinstance(predicted_answer, str):
                 predicted_answer = [predicted_answer]
             assert len(question) == len(correct_answer) == len(predicted_answer), "'question', 'correct_answer', and 'predicted_answer' must be lists of the same length."
@@ -522,7 +527,7 @@ class EvaluatorAgent(BaseAgent):
                         decision = 0.1
                     confidence = resp.get("confidence", "low")
                     confidence = convert_confidence_to_score(confidence)
-                    score = decision * confidence
+                    score = decision
                     results.append(score)
                 assert len(results) == len(question)
                 metadata.update({
@@ -536,13 +541,19 @@ class EvaluatorAgent(BaseAgent):
                 return {"error": error_msg}, {"metric/status": "execution_error"}
         elif evaluate_fn == "judge_answer":
             user_question = parameters.get("user_question", [])
+            if user_question == []:
+                user_question = parameters.get("question", [])
             if isinstance(user_question, str):
                 user_question = [user_question]
             system_answer = parameters.get("system_answer", [])
+            if system_answer == []:
+                system_answer = parameters.get("answer", [])
             if isinstance(system_answer, str):
                 system_answer = [system_answer]
             assert len(user_question) == len(system_answer), "'user_question' and 'system_answer' must be lists of the same length."
-            correct_answer = parameters.get("correct_answer", None)
+            correct_answer = parameters.get("correct_answer", [])
+            if correct_answer == []:
+                correct_answer = parameters.get("golen_answer", [])
             if isinstance(correct_answer, str):
                 correct_answer = [correct_answer]
             if correct_answer:
@@ -569,12 +580,16 @@ class EvaluatorAgent(BaseAgent):
                 return {"error": error_msg}, {"metric/status": "execution_error"}
         elif evaluate_fn == "evaluate_path":
             main_question = parameters.get("main_question", [])
+            if main_question == []:
+                main_question = parameters.get("question", [])
             if isinstance(main_question, str):
                 main_question = [main_question]
             reasoning_path = parameters.get("reasoning_path", [])
             if isinstance(reasoning_path, str):
                 reasoning_path = [reasoning_path]
             ground_truth_answer = parameters.get("ground_truth_answer", [])
+            if ground_truth_answer == []:
+                ground_truth_answer = parameters.get("golden_answer", [])
             if isinstance(ground_truth_answer, str):
                 ground_truth_answer = [ground_truth_answer]
             assert len(main_question) == len(reasoning_path) == len(ground_truth_answer), "'main_question', 'reasoning_path', and 'ground_truth_answer' must be lists of the same length."
@@ -595,6 +610,64 @@ class EvaluatorAgent(BaseAgent):
                 return results, metadata
             except Exception as e:
                 error_msg = f"Evaluation execution failed: {e}"
+                logger.error(f"[EvaluatorAgent] {error_msg}")
+                return {"error": error_msg}, {"metric/status": "execution_error"}
+        elif evaluate_fn == "majority_vote":
+            question = parameters.get("question", None)
+            assert isinstance(question, str), "'question' must be a string."
+            answer_lists = parameters.get("answer_lists", [])
+            if isinstance(answer_lists, str):
+                logger.warning("[EvaluatorAgent] 'answer_lists' is a string; majority vote is trivial.")
+                return answer_lists, {"metric/status": "single_answer"}
+            assert isinstance(answer_lists, list) and all(isinstance(x, str) for x in answer_lists), "'answer_lists' must be a list of strings."
+            if len(answer_lists) == 1:
+                logger.warning("[EvaluatorAgent] Only one answer provided in 'answer_lists'; majority vote is trivial.")
+                return answer_lists[0], {"metric/status": "single_answer"}
+            assert len(answer_lists) > 1, "'answer_lists' must contain at least two answers for majority voting."
+            inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+            inputs_kwargs.update({
+                "question": question,
+                "answers": answer_lists,
+            })
+            inputs_kwargs.update(kwargs)
+            try:
+                results = self.agent.majority_vote(**inputs_kwargs)
+                metadata.update({
+                    "metric/status": "success",
+                    "metric/num_answers": len(answer_lists),
+                })
+                return results, metadata
+            except Exception as e:
+                error_msg = f"Majority vote execution failed: {e}"
+                logger.error(f"[EvaluatorAgent] {error_msg}")
+                return {"error": error_msg}, {"metric/status": "execution_error"}
+        elif evaluate_fn == "synthesize_final_answer":
+            question = parameters.get("question", None)
+            assert isinstance(question, str), "'question' must be a string."
+            answers = parameters.get("answers", [])
+            if isinstance(answers, str):
+                logger.warning("[EvaluatorAgent] 'answers' is a string; synthesis is trivial.")
+                return {'final_answer': answers, "final_reasoning": answers}, {"metric/status": "single_answer"}
+            assert isinstance(answers, list) and all(isinstance(x, str) for x in answers), "'answers' must be a list of strings."
+            assert len(answers) > 0, "'answers' must contain at least one answer for synthesis."
+            if len(answers) == 1:
+                logger.warning("[EvaluatorAgent] Only one answer provided in 'answers'; synthesis is trivial.")
+                return {'final_answer': answers[0], "final_reasoning": answers[0]}, {"metric/status": "single_answer"}
+            inputs_kwargs = parameters.get("run_kwargs", {}).copy()
+            inputs_kwargs.update({
+                "question": question,
+                "reasoning_paths": answers,
+            })
+            inputs_kwargs.update(kwargs)
+            try:
+                results = self.agent.synthesize_final_answer(**inputs_kwargs)
+                metadata.update({
+                    "metric/status": "success",
+                    "metric/num_answers": len(answers),
+                })
+                return results, metadata
+            except Exception as e:
+                error_msg = f"Synthesis execution failed: {e}"
                 logger.error(f"[EvaluatorAgent] {error_msg}")
                 return {"error": error_msg}, {"metric/status": "execution_error"}
         else:

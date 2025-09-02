@@ -248,7 +248,7 @@ class RetrieverAgent:
 
 if __name__ == "__main__":
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-225-181:5000/search",
+        "url": "http://ip-10-4-230-228:5000/search",
         "retrieval_topk": 64,
         "query_instruction": None,
     }

@@ -42,7 +42,13 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 # Split the values by comma and strip whitespace
-                extracted_info[key] = match.group(1)
+                info = match.group(1)
+                info =  info.strip()
+                # split by ",\n"
+                list_items = re.split(r',\s*\n', info)
+                # strip each item
+                list_items = [item.strip().strip('"') for item in list_items if item.strip()]
+                extracted_info[key] = list_items
             else:
                 # match the case where it does not have ] in the end
                 pattern = rf'"{key}":\s*\[(.*)'
@@ -50,7 +56,13 @@ def extract_info_from_text(text, keys: List[str], value_type: List[str]=None):
                 if match:
                     # Split the values by comma and strip whitespace
                     # values = [v.strip().strip('"') for v in match.group(1).split(',')]
-                    extracted_info[key] = match.group(1)
+                    info = match.group(1)
+                    info =  info.strip()
+                    # split by ",\n"
+                    list_items = re.split(r',\s*\n', info)
+                    # strip each item
+                    list_items = [item.strip().strip('"') for item in list_items if item.strip()]
+                    extracted_info[key] = list_items
                 else:
                     extracted_info[key] = []
         else:
@@ -112,8 +124,6 @@ def format_context(memory: str = None, reasoning_trace: str = None, explored_dat
         context += f"\t**Information from external KB**\n{explored_data}\n----------\n"
     if reasoning_trace:
         context += f"\t**Reasoning trace**\n{reasoning_trace}"
-    if context.strip() == "":
-        print("[WARNING] Context is empty!")
     return context
 
 

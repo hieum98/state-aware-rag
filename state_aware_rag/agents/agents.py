@@ -556,9 +556,9 @@ class EvaluatorAgent(BaseAgent):
             if isinstance(system_answer, str):
                 system_answer = [system_answer]
             assert len(user_question) == len(system_answer), "'user_question' and 'system_answer' must be lists of the same length."
-            correct_answer = parameters.get("correct_answer", [])
-            if correct_answer == []:
-                correct_answer = parameters.get("golen_answer", [])
+            correct_answer = parameters.get("correct_answer", None)
+            if correct_answer == None:
+                correct_answer = parameters.get("golen_answer", None)
             if isinstance(correct_answer, str):
                 correct_answer = [correct_answer]
             if correct_answer:

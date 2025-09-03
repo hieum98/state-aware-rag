@@ -104,9 +104,12 @@ def format_reasoning_trace(trace: List[str]) -> str:
         print(f"Error in formatting reasoning trace: {e}")
         return ""
 
+
 def format_memory(memory: List[str]) -> str:
     formatted_memory = ""
     try:
+        if isinstance(memory, str):
+            return memory.strip()
         for mem in memory:
             if mem and mem.strip():
                 formatted_memory += f"- {mem.strip()}\n"
@@ -114,6 +117,7 @@ def format_memory(memory: List[str]) -> str:
     except Exception as e:
         print(f"Error in formatting memory: {e}")
         return ""
+
 
 def format_context(memory: str = None, reasoning_trace: str = None, explored_data: str = None):
     context = ""

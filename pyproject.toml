@@ -13,6 +13,8 @@ authors = [
   { name = "state-aware-rag contributors" }
 ]
 dependencies = [
+  "ray",
+  "omegaconf",
   "datasets",
   "transformers",
   "tqdm",

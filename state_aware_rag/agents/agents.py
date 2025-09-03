@@ -8,13 +8,22 @@ from typing import Any, Callable, Dict, Optional, TypeVar
 from pydantic import BaseModel
 from uuid import uuid4
 import ray
-from verl.utils.rollout_trace import rollout_trace_op
+# from verl.utils.rollout_trace import rollout_trace_op
 
 from state_aware_rag.agents.retriever_agents import RetrieverAgent
 from state_aware_rag.agents.roles.generator import Generator
 from state_aware_rag.agents.roles.extractor import Extractor
 from state_aware_rag.agents.roles.evaluator import Evaluator
 from state_aware_rag.agents.utils import convert_confidence_to_score
+from state_aware_rag.agents.prompts import (
+    decompose_and_answer,
+    evaluate,
+    extract,
+    finalize,
+    rephase_question,
+    self_correct,
+    synthesize
+    )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOGGING_LEVEL", "WARN"))
@@ -137,7 +146,7 @@ class BaseAgent:
     def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
         return {}, {}
 
-    @rollout_trace_op
+    # @rollout_trace_op
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> tuple[Dict[str, Any], float, dict]:
         """Execute the agent
 
@@ -436,6 +445,8 @@ class ExtractorAgent(BaseAgent):
         
         try:
             responses = self.agent.extract(**inputs_kwargs) # List of dict as output
+            assert isinstance(responses, list), "Extractor output should be a list."
+            assert all(isinstance(x, extract.ExtractOutput) for x in responses), "Each item in extractor output should be of type ExtractOutput."
         except Exception as e:
             error_msg = f"Extraction execution failed: {e}"
             logger.error(f"[ExtractorAgent] {error_msg}")
@@ -448,14 +459,8 @@ class ExtractorAgent(BaseAgent):
             "api_response": None,
             "metric/status": "unknown",
         }
-        if responses is None:
-            logger.error(f"[ExtractorAgent] No response received from extraction.")
-            results = {"extracted_info": None}
-            metadata["metric/status"] = "error"
-            return results, metadata
         
         is_batch = True if len(question) > 1 else False
-        extracted_info = []
         if is_batch:
             if len(responses) != len(question):
                 logger.warning(f"[ExtractorAgent] Mismatch in number of questions and results: {len(question)} questions but {len(responses)} results.")

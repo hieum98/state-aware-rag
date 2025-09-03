@@ -466,7 +466,7 @@ class StageAwareLoop(AgentLoopBase):
             assert answer_output.answer or answer_output.detailed_answer, f"Both answer and detailed_answer are empty in answer_output: {answer_output}"
         except Exception as e:
             logger.warning(f"Error when executing tool: {e}")
-            return "Answer generation failed."
+            return reasoning_trace # Fail-safe: return the current reasoning trace as the answer 
         finally:
             if instance_id:
                 await self.generator_agent.release(instance_id=instance_id)
@@ -481,8 +481,6 @@ class StageAwareLoop(AgentLoopBase):
         if reasoning:
             full_answer += f"Reasoning: {reasoning}"
         full_answer = full_answer.strip()
-        if not full_answer:
-            full_answer = "Answer generation failed."
         logger.debug(f"Generated Answer: {full_answer}, Reasoning: {reasoning}")
         return full_answer
        

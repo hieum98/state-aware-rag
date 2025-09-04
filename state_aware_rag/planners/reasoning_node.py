@@ -16,7 +16,7 @@ from state_aware_rag.agents.agents import (
     GeneratorAgent, 
     RetrievalAgent,
     ExtractorAgent,
-    RetrievalAgent
+    EvaluatorAgent
     )
 from state_aware_rag.agents.prompts import (
     decompose_and_answer,
@@ -64,7 +64,7 @@ class ReasoningNode(NodeMixin):
             generator: Optional[GeneratorAgent] = None,
             retriever: Optional[RetrievalAgent] = None,
             extractor: Optional[ExtractorAgent] = None,
-            evaluator: Optional[GeneratorAgent] = None,
+            evaluator: Optional[EvaluatorAgent] = None,
             # Node data
             question: Optional[str] = None,
             answer: Optional[str] = None,
@@ -72,6 +72,7 @@ class ReasoningNode(NodeMixin):
             confidence: Optional[float] = None,
             memory: Optional[List[str]] = None,
             # Options
+            is_cot: bool = False,
             max_depth: int = 15,
             golden_answer: Optional[Union[str, List[str]]] = None,
             user_question: Optional[str] = None,
@@ -88,6 +89,7 @@ class ReasoningNode(NodeMixin):
             "user_question": user_question,
             "question_id": question_id,
             "top_k": top_k,
+            "is_cot": is_cot,
             # Node agents
             "generator": generator,
             "retriever": retriever,
@@ -95,6 +97,7 @@ class ReasoningNode(NodeMixin):
             "extractor": extractor,
         }
         # Node topology
+        self.is_cot = is_cot
         self.node_type = node_type
         self.parent = parent
         self.children: List['ReasoningNode'] = []
@@ -163,7 +166,7 @@ class ReasoningNode(NodeMixin):
         return pprint.pformat(self.get_node(), indent=2)
     
     def is_terminal(self):
-        return self.node_type == NodeType.FINAL_ANSWER or self.depth >= self.max_depth
+        return self.node_type == NodeType.FINAL_ANSWER or self.depth > self.max_depth
 
     def is_valid_leaf(self):
         return self.node_type == NodeType.FINAL_ANSWER
@@ -171,12 +174,104 @@ class ReasoningNode(NodeMixin):
     def print_node(self):
         print(self)
 
-    def find_children(self):
-        return
+    def generate_children(self):
+        def read_results(results):
+            children: List['ReasoningNode'] = []
+            all_explored_info: List[str] = []
+            for res in results:
+                if res is None:
+                    continue
+                nodes, explored_info = res
+                if nodes:
+                    children.extend(nodes)
+                if explored_info:
+                    all_explored_info.extend(explored_info)
+            return children, all_explored_info
+        
+        if self.depth >= self.max_depth:
+            final_nodes, explored_info = asyncio.run(self.generate_final_answer_node())
+            children = final_nodes if final_nodes else []
+            all_explored_info = explored_info if explored_info else []
+        elif self.node_type == NodeType.USER_QUESTION:
+            tasks = [self.generate_subQA_node]
+            if not self.is_cot:
+                tasks.extend([self.generate_rephrase_question_node, self.generate_final_answer_node])
+            results = asyncio.run(asyncio.gather(*[task() for task in tasks]))
+            children, all_explored_info = read_results(results)
+        elif self.node_type == NodeType.SUB_QA_NODE:
+            tasks = [self.generate_subQA_node]
+            if not self.is_cot:
+                tasks.extend([self.generate_self_corrected_node, self.generate_synthesis_node,
+                              self.generate_rephrase_question_node, self.generate_subQA_node])
+            results = asyncio.run(asyncio.gather(*[task() for task in tasks]))
+            children, all_explored_info = read_results(results)
+        elif self.node_type == NodeType.REPHASED_QUESTION_NODE:
+            sub_qa_nodes, explored_info = asyncio.run(self.generate_subQA_node())
+            children = sub_qa_nodes if sub_qa_nodes else []
+            all_explored_info = explored_info if explored_info else []
+        elif self.node_type == NodeType.SELF_CORRECTED_NODE:
+            tasks = [self.generate_synthesis_node, self.generate_subQA_node]
+            results = asyncio.run(asyncio.gather(*[task() for task in tasks]))
+            children, all_explored_info = read_results(results)
+        elif self.node_type == NodeType.SYNTHESIS_NODE:
+            sub_qa_nodes, explored_info = asyncio.run(self.generate_subQA_node())
+            children = sub_qa_nodes if sub_qa_nodes else []
+            all_explored_info = explored_info if explored_info else []
+        else:
+            raise ValueError(f"Unknown node type: {self.node_type}")
+        
+        children = list(set(children))  # Deduplicate children
+        new_memory: Optional[List[str]] = None
+        if all_explored_info:
+            all_explored_info = list(set(all_explored_info))
+            new_memory = asyncio.run(self.update_memory(explored_data=all_explored_info))
+            new_memory = list(set(new_memory)) if new_memory else None
+            new_memory = [x.strip() for x in new_memory if x and x.strip()] if new_memory else None
+            new_memory = sorted(new_memory) if new_memory else None
+        for child in children:
+            child.memory = new_memory if new_memory else self.memory
+        return children
+
+    def find_children(self, rollout_id: str=None):
+        if self.children:
+            return self.children
+        children = self.generate_children()
+        for child in children:
+            child.set_rollout_id(rollout_id)
+        return children
     
     def reward(self):
-        return
-    
+        assert self.is_terminal(), "Reward can only be computed for terminal nodes."
+        user_question = self.node_config.get("user_question", "")
+        golden_answer = self.node_config.get("golden_answer", None)
+        reasoning_path = self.get_path()
+        reasoning_trace, scores = self.get_reasoning_trace(path=reasoning_path)
+        if self.node_type == NodeType.FINAL_ANSWER:
+            answer = self.state['detailed_answer']
+            confidence = self.state['confidence']
+        else:
+            answer = reasoning_trace
+            confidence = sum(scores) / len(scores) if scores else 0.1
+        
+        # Answer Reward
+        agent_input = {
+                'evaluate_fn': 'judge_answer',
+                'question': user_question,
+                'answer': answer,
+        }
+        if golden_answer:
+            agent_input['golen_answer'] = golden_answer
+        logger.info(f"Evaluating answer for question: {user_question}")
+        logger.info(f"Answer to evaluate: {answer} with golden answer: {golden_answer}")
+        instance_id, _ = asyncio.run(self.evaluator.create())
+        response, _, _ = asyncio.run(self.evaluator.execute(instance_id, agent_input))
+        logger.info(f"Answer evaluation output: {response}")
+        answer_reward = response[0]
+
+        # Confidence Reward
+        confidence_reward = sum(scores) / len(scores) if scores else 0.1
+        return 0.5 * answer_reward + 0.5 * confidence_reward
+
     async def explore(self, question: str):
         if not question or not question.strip():
             logger.warning(f"Empty question for exploration at depth {self.depth}")

@@ -1,4 +1,5 @@
 import copy
+import logging
 import os
 import time
 from typing import Any, Dict, List, Union, Callable
@@ -16,6 +17,8 @@ from tqdm import tqdm
 from state_aware_rag.agents.utils import convert_confidence_to_score, extract_info_from_text
 
 litellm.drop_params=True
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOGLEVEL", "WARN").upper())
 
 
 class ModelClient:
@@ -141,7 +144,7 @@ class LiteLLMClient(ModelClient):
     ):
         super().__init__(model_name, url, api_key, concurrency, **generate_kwargs)
         self.structure_output_supported = supports_response_schema(model_name)
-        print(f"Calling API via LiteLLM with model {self.model_name} at {self.url}")
+        logger.info(f"Calling API via LiteLLM with model {self.model_name} at {self.url}")
 
     def prepare_model_kwargs(self, **kwargs):
         reasoning_effort = kwargs.get('reasoning_effort', self.reasoning_effort)
@@ -196,7 +199,7 @@ class OpenAIClient(ModelClient):
             self.client = openai.OpenAI(base_url=self.url, api_key=self.api_key)  # type: ignore[attr-defined]
         except Exception:
             self.client = openai.Client(base_url=self.url, api_key=self.api_key)  # type: ignore[attr-defined]
-        print(f"Calling OpenAI API with model {self.model_name} at {self.url}")
+        logger.info(f"Calling OpenAI API with model {self.model_name} at {self.url}")
     
     def prepare_model_kwargs(self, **kwargs):
         reasoning_effort = kwargs.get('reasoning_effort', self.reasoning_effort)
@@ -242,10 +245,8 @@ class LLMAgent:
         client_kwargs = copy.deepcopy(client_kwargs)
         self.client_type = client_kwargs.pop('client_type', 'litellm')
         if self.client_type == 'litellm':
-            print("Using LiteLLMClient for LLM generation.")
             self.client = LiteLLMClient(**client_kwargs, **generate_kwargs)
         elif self.client_type == 'openai':
-            print("Using OpenAIClient for LLM generation.")
             self.client = OpenAIClient(**client_kwargs, **generate_kwargs)
         else:
             raise ValueError(f"Unsupported client type: {self.client_type}. Supported types are 'litellm' and 'openai'.")

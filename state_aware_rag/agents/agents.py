@@ -64,11 +64,6 @@ class TokenBucketWorker:
 
 
 class AgentExecutionWorker:
-    """Deprecated: Previously executed callables under a global rate limit.
-
-    Keeping the class for backward compatibility, but we no longer pass
-    bound methods into Ray to avoid serialization issues with locks.
-    """
 
     def __init__(self, enable_global_rate_limit=True, rate_limit=10):
         self.rate_limit_worker = (
@@ -79,8 +74,7 @@ class AgentExecutionWorker:
 
     def ping(self):
         return True
-
-    # NOTE: Do not use this in new code; execute bound functions locally instead.
+    
     def execute(self, fn: Callable[..., T], *fn_args, **fn_kwargs) -> T:
         if self.rate_limit_worker:
             with ExitStack() as stack:
@@ -88,21 +82,6 @@ class AgentExecutionWorker:
                 ray.get(self.rate_limit_worker.acquire.remote())
                 return fn(*fn_args, **fn_kwargs)
         return fn(*fn_args, **fn_kwargs)
-
-
-def init_agent_execution_pool(num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode):
-    """Initialize the (legacy) execution pool actor.
-
-    New code should not rely on this actor for executing callables.
-    """
-    if mode == PoolMode.ThreadMode:
-        return (
-            ray.remote(AgentExecutionWorker)
-            .options(max_concurrency=num_workers)
-            .remote(enable_global_rate_limit=enable_global_rate_limit, rate_limit=rate_limit)
-        )
-    else:
-        raise NotImplementedError("Process mode is not implemented yet")
 
 
 class BaseAgent:
@@ -115,12 +94,9 @@ class BaseAgent:
         self.rate_limit = config.get("rate_limit", 120)
         self.timeout = config.get("timeout", 300)
         self.enable_global_rate_limit = config.get("enable_global_rate_limit", True)
-        # Global rate limiter actor (shared by name across processes)
-        self.rate_limit_worker = (
-            TokenBucketWorker.options(name=f"rate-limiter-{self.name}", 
-                                      get_if_exists=True).remote(self.rate_limit)
-            if self.enable_global_rate_limit
-            else None
+        self.excution_pool = ray.remote(AgentExecutionWorker).options(max_concurrency=self.num_workers).remote(
+            enable_global_rate_limit=self.enable_global_rate_limit,
+            rate_limit=self.rate_limit,
         )
 
         self._instance_dict: Dict[str, Dict[str, Any]] = {}
@@ -161,16 +137,7 @@ class BaseAgent:
         """
         timeout = self.timeout
         try:
-            # Acquire global token if enabled, then execute locally to avoid
-            # sending bound methods (which may capture locks) to Ray.
-            if self.rate_limit_worker:
-                with ExitStack() as stack:
-                    stack.callback(self.rate_limit_worker.release.remote)
-                    # Block until we get a token
-                    ray.get(self.rate_limit_worker.acquire.remote())
-                    results, metadata = self.run(instance_id, parameters, timeout=timeout, **kwargs)
-            else:
-                results, metadata = self.run(instance_id, parameters, timeout=timeout, **kwargs)
+            results, metadata = await self.excution_pool.execute.remote(self.run, instance_id, parameters)
 
             self._instance_dict[instance_id] = {
                 "results": results,
@@ -216,12 +183,12 @@ class RetrievalAgent(BaseAgent):
         self.offline_retrieval_config = config.get("offline_retrieval_config", None)
         self.top_k = config.get("top_k", None)
         assert self.online_retrieval_config or self.offline_retrieval_config, "At least one of online_retrieval_config or offline_retrieval_config must be provided."
-        self.agent = RetrieverAgent(
+
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        agent = RetrieverAgent(
             online_kwargs=self.online_retrieval_config,
             offline_kwargs=self.offline_retrieval_config,
             )
-
-    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
         retrieval_query_list = parameters.get("retrieval_query_list", [])
         if isinstance(retrieval_query_list, str):
             retrieval_query_list = [retrieval_query_list]
@@ -234,7 +201,7 @@ class RetrievalAgent(BaseAgent):
         response = None
         error_msg = None
         try:
-            response = self.agent.search(query=retrieval_query_list, top_k=top_k, instruction=instruction)
+            response = agent.search(query=retrieval_query_list, top_k=top_k, instruction=instruction)
         except Exception as e:
             error_msg = f"Search execution failed: {e}"
             logger.error(f"[RetrievalAgent] {error_msg}")
@@ -308,18 +275,18 @@ class GeneratorAgent(BaseAgent):
         self.cache_dir = os.path.join(cache_dir, model_name)
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."
         assert self.generation_config is not None, "generation_config must be provided in config."
-        self.agent = Generator(
+
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        agent = Generator(
             client_kwargs=self.client_kwargs,
             generate_kwargs=self.generation_config,
             use_cache=self.use_cache,
             cache_dir=self.cache_dir,
         )
-
-    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
         # check parameters
         generate_fn = parameters.pop("generate_fn", None)
-        # Check if generate_fn is method of self.agent
-        if not generate_fn or not hasattr(self.agent, generate_fn) or not callable(getattr(self.agent, generate_fn)):
+        # Check if generate_fn is method of agent
+        if not generate_fn or not hasattr(agent, generate_fn) or not callable(getattr(agent, generate_fn)):
             error_msg = f"Error: 'generate_fn' is missing or invalid in parameters. Received: {parameters}"
             logger.error(f"[GeneratorAgent] {error_msg}")
             return {"error": error_msg}, {"metric/status": "invalid_parameters"}
@@ -362,7 +329,7 @@ class GeneratorAgent(BaseAgent):
         inputs_kwargs.update(kwargs)
         
         try:
-            generate_method = getattr(self.agent, generate_fn)
+            generate_method = getattr(agent, generate_fn)
             response = generate_method(**inputs_kwargs) # List of BaseModel as output
         except Exception as e:
             error_msg = f"Generation execution failed: {e}"
@@ -411,14 +378,13 @@ class ExtractorAgent(BaseAgent):
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."
         assert self.generation_config is not None, "generation_config must be provided in config."
 
-        self.agent = Extractor(
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        agent = Extractor(
             client_kwargs=self.client_kwargs,
             generate_kwargs=self.generation_config,
             use_cache=self.use_cache,
             cache_dir=self.cache_dir,
         )
-
-    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
         # check parameters
         question = parameters.get("question", [])
         if isinstance(question, str):
@@ -444,7 +410,7 @@ class ExtractorAgent(BaseAgent):
         inputs_kwargs.update(kwargs)
         
         try:
-            responses = self.agent.extract(**inputs_kwargs) # List of dict as output
+            responses = agent.extract(**inputs_kwargs) # List of dict as output
             assert isinstance(responses, list), "Extractor output should be a list."
             assert all(isinstance(x, extract.ExtractOutput) for x in responses), "Each item in extractor output should be of type ExtractOutput."
         except Exception as e:
@@ -486,18 +452,18 @@ class EvaluatorAgent(BaseAgent):
         model_name = self.client_kwargs['model_name']
         cache_dir = config.get("cache_dir", 'cache/evaluator')
         self.cache_dir = os.path.join(cache_dir, model_name)
+        self.verbose = config.get("verbose", False)
         assert self.client_kwargs is not None, "client_kwargs must be provided in config."
         assert self.generation_config is not None, "generation_config must be provided in config."
 
-        self.agent = Evaluator(
+    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
+        agent = Evaluator(
             client_kwargs=self.client_kwargs,
             generate_kwargs=self.generation_config,
             use_cache=self.use_cache,
             cache_dir=self.cache_dir,
-            verbose = config.get("verbose", False),
+            verbose=self.verbose,
         )
-
-    def run(self, instance_id: str, parameters: dict[str, Any], **kwargs):
         evaluate_fn = parameters.pop("evaluate_fn", None)
         metadata: Dict[str, Any] = {"metric/status": "unknown"}
         
@@ -524,7 +490,7 @@ class EvaluatorAgent(BaseAgent):
             })
             inputs_kwargs.update(kwargs)
             try:
-                responses = self.agent.evaluate_final_answer(**inputs_kwargs) # List of dict as output
+                responses = agent.evaluate_final_answer(**inputs_kwargs) # List of dict as output
                 results = []
                 for resp in responses:
                     decision = resp.get("decision", 0.1)
@@ -532,7 +498,7 @@ class EvaluatorAgent(BaseAgent):
                         decision = 0.1
                     confidence = resp.get("confidence", "low")
                     confidence = convert_confidence_to_score(confidence)
-                    score = decision
+                    score = float(decision)
                     results.append(score)
                 assert len(results) == len(question)
                 metadata.update({
@@ -572,7 +538,7 @@ class EvaluatorAgent(BaseAgent):
             })
             inputs_kwargs.update(kwargs)
             try:
-                results = self.agent.judge_answer(**inputs_kwargs) # List of float as output
+                results = agent.judge_answer(**inputs_kwargs) # List of float as output
                 assert len(results) == len(user_question)
                 metadata.update({
                     "metric/status": "success",
@@ -606,7 +572,7 @@ class EvaluatorAgent(BaseAgent):
             })
             inputs_kwargs.update(kwargs)
             try:
-                results = self.agent.evaluate_path(**inputs_kwargs)
+                results = agent.evaluate_path(**inputs_kwargs)
                 assert len(results) == len(main_question)
                 metadata.update({
                     "metric/status": "success",
@@ -636,7 +602,7 @@ class EvaluatorAgent(BaseAgent):
             })
             inputs_kwargs.update(kwargs)
             try:
-                results = self.agent.majority_vote(**inputs_kwargs)
+                results = agent.majority_vote(**inputs_kwargs)
                 metadata.update({
                     "metric/status": "success",
                     "metric/num_answers": len(answer_lists),
@@ -665,7 +631,7 @@ class EvaluatorAgent(BaseAgent):
             })
             inputs_kwargs.update(kwargs)
             try:
-                results = self.agent.synthesize_final_answer(**inputs_kwargs)
+                results = agent.synthesize_final_answer(**inputs_kwargs)
                 metadata.update({
                     "metric/status": "success",
                     "metric/num_answers": len(answers),
@@ -680,37 +646,5 @@ class EvaluatorAgent(BaseAgent):
             logger.error(f"[EvaluatorAgent] {error_msg}")
             return {"error": error_msg}, {"metric/status": "invalid_parameters"}
         
-
-if __name__=='__main__':
-    import asyncio
-    import ray
-
-    ray.init()
-    retrieval_config = {
-        "name": "retrieval_agent",
-        "num_workers": 64,
-        "rate_limit": 32,
-        "timeout": 300,
-        "enable_global_rate_limit": True,
-        "online_retrieval_config": {
-            "url": "http://ip-10-4-225-181:5000/search",
-            "retrieval_topk": 5,
-            "query_instruction": None,
-        }
-    }
-    agent = RetrievalAgent(retrieval_config)
-    instance_id, _ = asyncio.run(agent.create())
-    print(f"Created agent instance: {instance_id}")
-    parameters = {
-        "retrieval_query_list": ["What is the capital of France?", "Who is the president of the United States?"],
-        "top_k": 3,
-    }
-    results, reward, metrics = asyncio.run(agent.execute(instance_id, parameters))
-    # breakpoint() # with ray debug, breakpoint() does not work or hang
-
-
-
-        
-            
 
 

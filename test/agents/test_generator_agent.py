@@ -29,8 +29,8 @@ def base_config():
     # Load generator config and make it safe for tests (no global rate limiter actor)
     cfg = omegaconf.OmegaConf.load("configs/generator.yaml")
     cfg_dict = omegaconf.OmegaConf.to_container(cfg, resolve=True)
-    cfg_dict["enable_global_rate_limit"] = False
-    cfg_dict["num_workers"] = 4
+    cfg_dict["enable_global_rate_limit"] = True
+    cfg_dict["num_workers"] = 32
     cfg_dict["timeout"] = 30
     # Reduce flakiness: deterministic single sample, low temp
     try:
@@ -46,8 +46,8 @@ def test_generate_answer(ray_cluster, base_config):
     agent = GeneratorAgent(config=base_config)
     parameters = {
         "generate_fn": "generate_answer",
-        "question_list": ["What is the capital of France?"],
-        "context_list": ["France's capital is Paris."],
+        "question_list": ["What is the capital of France?"] * 100,
+        "context_list": ["France's capital is Paris."] * 100,
     }
 
     instance_id, _ = asyncio.run(agent.create())

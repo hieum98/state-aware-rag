@@ -658,7 +658,6 @@ class ReasoningNode(Node, NodeMixin):
             # If the node is a final answer node, it has no children
             raise ValueError("Final answer nodes cannot have children.")
         elif self.node_type == NodeType.SUB_QA_NODE:
-            rephrase_nodes = self.generate_rephrase_question_node()
             self_corrected_nodes, external_information = self.generate_self_corrected_node()
             explored_information += external_information
             sub_qa_nodes, external_information = self.generate_subQA_node()

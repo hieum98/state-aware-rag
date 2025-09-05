@@ -74,8 +74,6 @@ if __name__ == "__main__":
             query = [query]
 
         try:
-            # Prepare the query embeddings
-            # Check if instruction is a string and have {query} placeholder
             assert '{query}' in instruction, "Instruction must contain a {query} placeholder. Falling back to raw query."
             query = [instruction.format(query=q) for q in query]
         except:

@@ -603,9 +603,10 @@ class AgentLoopWorker:
         non_tensor_batch = {
             "__num_turns__": np.array([input.num_turns for input in inputs], dtype=np.int32),
         }
-        # add uid to non_tensor_batch
         assert all("uid" in input.extra_fields for input in inputs), "uid is required in extra_fields"
         non_tensor_batch["uid"] = np.array([input.extra_fields["uid"] for input in inputs], dtype=object)
+        assert all("_id" in input.extra_fields for input in inputs), "_id is required in extra_fields"
+        non_tensor_batch["_id"] = np.array([input.extra_fields["_id"] for input in inputs], dtype=object)
 
         # add reward_extra_info to non_tensor_batch
         reward_extra_infos = [input.extra_fields.get("reward_extra_info", {}) for input in inputs]

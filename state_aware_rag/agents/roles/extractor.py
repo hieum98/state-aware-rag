@@ -36,12 +36,13 @@ class Extractor(LLMAgent):
             question = [question]
             assert isinstance(document, str), "document must be a string when question is a string"
             document = [document]
-            if addtional_info is not None:
-                assert isinstance(addtional_info, dict)
+        if addtional_info is not None:
+            assert isinstance(addtional_info, (dict, list)), "additional_info must be a dictionary or a list of dictionaries"
+            if isinstance(addtional_info, dict):
                 addtional_info = [addtional_info]
         assert len(question) == len(document), "question, current_step_objective, and document must have the same length"
         if addtional_info is not None:
-            assert len(question) == len(addtional_info), "question and additional_info must have the same length"
+            assert len(question) == len(addtional_info), f"question and additional_info must have the same length. {question}, {addtional_info}"
 
         batch = [
             self.extract_prompt.format(

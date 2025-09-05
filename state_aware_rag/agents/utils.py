@@ -121,29 +121,29 @@ def format_memory(memory: List[str]) -> str:
 
 def format_context(memory: str = None, reasoning_trace: str = None, explored_data: str = None):
     context = ""
-    reasoning_trace = reasoning_trace.strip()
     if memory:
+        memory = memory.strip()
         context += f"\t**Memory knowledge**\n{memory}\n----------\n"
     if explored_data:
+        explored_data = explored_data.strip()
         context += f"\t**Information from external KB**\n{explored_data}\n----------\n"
     if reasoning_trace:
+        reasoning_trace = reasoning_trace.strip()
         context += f"\t**Reasoning trace**\n{reasoning_trace}"
     return context
 
 
 def format_reflection_context(current_memory: str = None, intermediate_conclusions: str = None, explored_data: str = None):
     context = ""
-    current_memory = current_memory.strip() if current_memory else ""
-    intermediate_conclusions = intermediate_conclusions.strip() if intermediate_conclusions else ""
-    explored_data = explored_data.strip() if explored_data else ""
     if current_memory:
+        current_memory = current_memory.strip()
         context += f"\t**Current memory knowledge**\n{current_memory}\n----------\n"
     if intermediate_conclusions:
+        intermediate_conclusions = intermediate_conclusions.strip()
         context += f"\t**Intermediate conclusions**\n{intermediate_conclusions}"
     if explored_data:
+        explored_data = explored_data.strip()
         context += f"\t**Information from external KB**\n{explored_data}\n----------\n"
-    if context.strip() == "":
-        print("[WARNING] Reflection context is empty!")
     return context
 
 
@@ -161,7 +161,7 @@ def format_extractor_messages(question: Union[str, List[str]], context: Union[st
             ) for q, d in zip(question, context)
     ]
     batch = [[{'role': 'user', 'content': x}] for x in batch]
-    if len(batch) == 1:
+    if len(batch) == 1 and isinstance(question, str):
         return batch[0]
     return batch
 

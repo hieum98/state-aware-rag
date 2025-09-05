@@ -26,7 +26,7 @@ from state_aware_rag.agents.prompts import (
     )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("LOGGING_LEVEL", "WARN"))
+logger.setLevel(os.getenv("LOGGING_LEVEL", "INFO"))
 
 T = TypeVar("T")
 
@@ -329,6 +329,7 @@ class GeneratorAgent(BaseAgent):
         inputs_kwargs.update(kwargs)
         
         try:
+            logger.debug(f"[GeneratorAgent] Running generation with inputs: {inputs_kwargs}")
             generate_method = getattr(agent, generate_fn)
             response = generate_method(**inputs_kwargs) # List of BaseModel as output
         except Exception as e:
@@ -410,6 +411,7 @@ class ExtractorAgent(BaseAgent):
         inputs_kwargs.update(kwargs)
         
         try:
+            logger.debug(f"[ExtractorAgent] Running extraction with inputs: {inputs_kwargs}")
             responses = agent.extract(**inputs_kwargs) # List of dict as output
             assert isinstance(responses, list), "Extractor output should be a list."
             assert all(isinstance(x, extract.ExtractOutput) for x in responses), "Each item in extractor output should be of type ExtractOutput."
@@ -636,6 +638,10 @@ class EvaluatorAgent(BaseAgent):
                     "metric/status": "success",
                     "metric/num_answers": len(answers),
                 })
+                results = {
+                    "final_answer": results[0],
+                    "final_reasoning": results[1],
+                }
                 return results, metadata
             except Exception as e:
                 error_msg = f"Synthesis execution failed: {e}"

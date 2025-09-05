@@ -29,7 +29,7 @@ def base_config():
 def test_retrieval(ray_cluster, base_config):
     agent = RetrievalAgent(config=base_config)
     parameters = {
-        "retrieval_query_list": ["Who is the president of the United States?"]*128,
+        "retrieval_query_list": ["In what year was 'Arthur's Magazine' first published?"]
     }
     
     instance_id, _ = asyncio.run(agent.create())

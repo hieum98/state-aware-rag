@@ -33,7 +33,7 @@ JUDGE_ANSWER_PROMPT = """You are an expert evaluator. Your task is to provide a 
 
 Evaluation Criteria:
     - Helpfulness & Relevance: How does the answer address the user's core need?
-    - Correctness: Is the information accurate? If a correct_answer is provided and the system_answer matches it, you must give a rating of 10.0.
+    - Correctness: Is the information accurate? If a correct_answer is provided and the system_answer matches it, you must give a rating of 10.0. If a correct_answer is not provided, use your own knowledge to judge correctness (you can do external research if needed).
 
 Here are some examples: {examples}
 Now, please evaluate the following question and answer:

@@ -4,46 +4,17 @@ Luke Harold Miles, July 2019, Public Domain Dedication
 See also https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
 https://gist.github.com/qpwo/c538c6f73727e254fdc7fab81024f6e1
 """
-
+import os
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Dict, List
 import math, random
+import logging
 
+from state_aware_rag.planners.reasoning_node import ReasoningNode as Node
 
-class Node(ABC):
-    """
-    A node in the MCTS tree. This is an abstract base class that should be subclassed to implement specific game logic.
-    """
-    @abstractmethod
-    def find_children(self):
-        "All possible successors of this board state"
-        return set()
-
-    @abstractmethod
-    def is_terminal(self):
-        "Returns True if the node has no children"
-        return True
-
-    @abstractmethod
-    def reward(self):
-        "Assumes `self` is terminal node. 1=win, 0=loss, .5=tie, etc"
-        return 0
-
-    @abstractmethod
-    def __hash__(self):
-        "Nodes must be hashable"
-        return 123456789
-
-    @abstractmethod
-    def __eq__(node1, node2):
-        "Nodes must be comparable"
-        return True
-    
-    @abstractmethod
-    def print_node(self):
-        "Print the node in a human-readable format"
-        pass
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOGGING_LEVEL", "INFO"))
 
 
 class MCTS:
@@ -56,7 +27,6 @@ class MCTS:
         self.exploration_weight = exploration_weight # Weight of exploration vs exploitation
         
         self.explored_nodes = set() # Set of explored nodes
-        self.verbose = verbose # If True, print debug information
     
     def _uct_select(self, node: Node):
         """
@@ -119,15 +89,7 @@ class MCTS:
             return # None node, no children to expand
         
         self.children[node] = node.find_children(rollout_id) # Find the children of the node
-        if self.verbose:
-            print(f"Expanding node:")
-            node.print_node()
-            print(f"Found {len(self.children[node])} children:")
-            for i, child in enumerate(self.children[node]):
-                print("*" * 10)
-                print(f"Child {i}:")
-                child.print_node()
-                print("*" * 10)
+        logger.debug(f"Expanding node: {node}. Found {len(self.children[node])} children.")
     
     def _simulate(self, node: Node, rollout_id=None) -> List[Node]:
         """
@@ -166,11 +128,6 @@ class MCTS:
         Perform a rollout from the given node to a terminal state and update the tree's nodes reward and visit counts by using backpropagation.
         """
         path = self._select(node) # Select a path to expand
-        if self.verbose:
-            print("Selected path for rollout:")
-            for i, n in enumerate(path):
-                print(f"Step {i}: ")
-                n.print_node()
         leaf = path[-1] # The last node in the path is the leaf node
         
         self._expand(leaf, rollout_id=rollout_id) # Expand the the tree with the children of the leaf node
@@ -179,15 +136,9 @@ class MCTS:
             simulated_node = simulated_path[-1] # The last node in the simulated path is the terminal node
         else:
             simulated_node = path[-1] # If the simulated path is empty, use the leaf node as the simulated node
-        if self.verbose:
-            for i, n in enumerate(path + simulated_path):
-                print(f"Simulated Step {i}:")
-                n.print_node()
                 
         # Guard reward computation for non-leaf nodes
         reward = simulated_node.reward() if hasattr(simulated_node, 'is_valid_leaf') and simulated_node.is_valid_leaf() else 0.0
-        if self.verbose:
-            print(f"Reward for the simulated node: {reward}")
         
         self._backpropagate(path + simulated_path, reward)
         

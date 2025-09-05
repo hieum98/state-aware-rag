@@ -1,7 +1,9 @@
 import requests
+import os
 import json
 import time
 from typing import List, Union, TYPE_CHECKING
+import logging
 
 try:
     from flashrag.retriever.retriever import DenseRetriever  # type: ignore
@@ -11,6 +13,8 @@ except ImportError:
     Index_Builder = None  # type: ignore
     # FlashRAG is optional; will raise informative error if attempted to use.
 
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOGGING_LEVEL", "INFO"))
 
 class FlashRAGRetrieverAgent:
     """
@@ -158,7 +162,7 @@ class APIRetrieverAgent:
         self.headers = {'Content-Type': 'application/json'}
         self.retrieval_topk = kwargs.get('retrieval_topk', 5)
         self.query_instruction = kwargs.get('query_instruction', None)
-        print(f"Initialized APIRetrieverAgent with URL: {self.url}")
+        logger.info(f"Initialized APIRetrieverAgent with URL: {self.url}")
 
     def search(
             self, 

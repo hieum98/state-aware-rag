@@ -54,18 +54,19 @@ def base_config():
 def test_state_aware_loop(ray_cluster, base_config):
     agent_loop_manager = init_agent_loop_manager(base_config)
     raw_prompts = [
-        "Which magazine was started first 'Arthur's Magazine' or 'First for Women'?",
-        "Who wrote the play 'Romeo and Juliet'?",
-        "Who is the creator of The Neverwhere?"
+        "Which magazine was started first 'First for Women' or 'Arthur's Magazine'?",
+        # "Who wrote the play 'Romeo and Juliet'?",
+        # "Who is the creator of The Neverwhere?"
         ]
     correct_answers = [
         "'Arthur's Magazine'",
-        "The play 'Romeo and Juliet' was written by William Shakespeare.",
-        "The creator of 'Neverwhere' is Neil Gaiman."
+        # "The play 'Romeo and Juliet' was written by William Shakespeare.",
+        # "The creator of 'Neverwhere' is Neil Gaiman."
     ]
     # Create a batch of prompts
     batch = DataProto(
         non_tensor_batch={
+            'uid': np.array([f"test-{i}" for i in range(len(raw_prompts))], dtype=object),
             "correct_answer": np.array(correct_answers, dtype=object),
             "raw_prompt": np.array(raw_prompts, dtype=object),
             "agent_name": np.array(["state_aware"]*len(raw_prompts)),
@@ -77,5 +78,6 @@ def test_state_aware_loop(ray_cluster, base_config):
     print("Batch:", batch)
     results = agent_loop_manager.generate_sequences(prompts=batch)
     print("Results:", results)
+    print("Rewards:", results.batch.get("rm_scores"))
     
 

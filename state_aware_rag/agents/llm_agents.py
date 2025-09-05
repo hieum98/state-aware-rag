@@ -18,7 +18,7 @@ from state_aware_rag.agents.utils import convert_confidence_to_score, extract_in
 
 litellm.drop_params=True
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("LOGLEVEL", "WARN").upper())
+logger.setLevel(os.getenv("LOGGING_LEVEL", "INFO"))
 
 
 class ModelClient:

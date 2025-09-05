@@ -1,6 +1,8 @@
+import os
 import time 
 from typing import Any, Dict, List, Optional, Union
 import pydantic
+import logging
 
 from state_aware_rag.agents.llm_agents import LLMAgent
 from state_aware_rag.agents.prompts import (
@@ -11,6 +13,8 @@ from state_aware_rag.agents.prompts import (
     rephase_question,
     )
 
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOGGING_LEVEL", "INFO"))
 
 class Generator(LLMAgent):
     def __init__(
@@ -83,7 +87,14 @@ class Generator(LLMAgent):
             answer = x.get('answer', "")
             confidence = x.get('confidence', "low")
             confidence = confidence if confidence else "low"
-            assert answer or detailed_answer, "Either answer or detailed_answer must be provided."
+            if not answer and not detailed_answer:
+                logger.warning(f"Empty answer and detailed_answer for {x}")
+                if reasoning:
+                    answer = reasoning
+                    detailed_answer = reasoning
+                else:
+                    answer = "No answer provided."
+                    detailed_answer = "No detailed answer provided."
             if not answer and detailed_answer:
                 answer = detailed_answer
             if not detailed_answer and answer:
@@ -139,7 +150,14 @@ class Generator(LLMAgent):
         for i, x in enumerate(items):
             answerable_main_question = x.get('answerable_main_question', False)
             subquestion = x.get('subquestion', "")
-            assert subquestion or answerable_main_question, "Either subquestion must be provided or the main question must be answerable."
+            if not subquestion and not answerable_main_question:
+                logger.warning(f"Empty subquestion and main question not answerable for {x}")
+                if x.get('reasoning', ""):
+                    subquestion = x['reasoning']  # Fallback to reasoning if subquestion is empty
+                else:
+                    subquestion = question[i] if len(question) > 1 else question[0] # Fallback to original question if reasoning is also empty
+
+            # assert subquestion or answerable_main_question, f"Either subquestion must be provided or the main question must be answerable.{x}"
             if answerable_main_question:
                 subquestion = question[i] if len(question) > 1 else question[0]
             reasoning = x.get('reasoning', "")
@@ -196,13 +214,15 @@ class Generator(LLMAgent):
         for x in items:
             answerable_main_question = x.get('answerable_main_question', False)
             synthesis = x.get('synthesis', "")
-            # If the synthesis is empty, set answerable_main_question to False to keep reasoning consistent
-            if not synthesis:
-                answerable_main_question = False
             reasoning = x.get('reasoning', "")
             confidence = x.get('confidence', None)
             confidence = confidence if confidence else "low"
-            assert synthesis, "Synthesis must be provided."
+            if not synthesis:
+                if reasoning:
+                    synthesis = reasoning
+                else:
+                    synthesis = "No synthesis provided."
+                    answerable_main_question = False
             all_results.append(
                 synthesize.SynthesizeOutput(
                     answerable_main_question=answerable_main_question,
@@ -254,7 +274,16 @@ class Generator(LLMAgent):
         for x in items:
             final_answer = x.get('answer', "")
             detailed_final_answer = x.get('detailed_answer', "")
-            assert final_answer or detailed_final_answer, "Either final_answer or detailed_final_answer must be provided."
+            reasoning = x.get('reasoning', "")
+            # assert final_answer or detailed_final_answer, "Either final_answer or detailed_final_answer must be provided."
+            if not final_answer and not detailed_final_answer:
+                logger.warning(f"Empty final_answer and detailed_final_answer for {x}")
+                if reasoning:
+                    final_answer = reasoning
+                    detailed_final_answer = reasoning
+                else:
+                    final_answer = "No final answer provided."
+                    detailed_final_answer = "No detailed final answer provided."
             if not final_answer and detailed_final_answer:
                 final_answer = detailed_final_answer # If final_answer is empty, use detailed_final_answer as final_answer
             if not detailed_final_answer and final_answer:
@@ -323,7 +352,11 @@ class Generator(LLMAgent):
             verification_status = verification_status if verification_status else "UNSUPPORTED"
             confidence = x.get('confidence', None)
             confidence = confidence if confidence else "low"
-            assert reasoning or reanswer, "Either reasoning or reanswer must be provided."
+            # assert reasoning or reanswer, "Either reasoning or reanswer must be provided."
+            if not reasoning and not reanswer:
+                logger.warning(f"Empty reanswer and reasoning for {x}")
+                reanswer = "No reanswer provided."
+                reasoning = "No reasoning provided."
             if not reanswer and reasoning:
                 reanswer = reasoning # If reanswer is empty, use reasoning as reanswer
             if not reasoning and reanswer:
@@ -371,7 +404,11 @@ class Generator(LLMAgent):
         for x in items:
             rephrased_question = x.get('rephrased_question', "")
             reasoning = x.get('reasoning', "")
-            assert rephrased_question or reasoning, "Either rephrased_question or reasoning must be provided."
+            # assert rephrased_question or reasoning, "Either rephrased_question or reasoning must be provided."
+            if not rephrased_question and not reasoning:
+                logger.warning(f"Empty rephrased_question and reasoning for {x}")
+                rephrased_question = "No rephrased question provided."
+                reasoning = "No reasoning provided."
             if not rephrased_question and reasoning:
                 rephrased_question = reasoning # If rephrased_question is empty, use reasoning as rephrased_question
             if not reasoning and rephrased_question:
@@ -413,7 +450,7 @@ class Generator(LLMAgent):
         response = self.role_execute(batch, **kwargs)
         output: List[decompose_and_answer.QueriesGenerationOutput] = []
         items = response if isinstance(response, list) else [response]
-        for item in items:
+        for i, item in enumerate(items):
             if 'queries' in item:
                 queries = item['queries']
                 if isinstance(queries, str):
@@ -421,7 +458,10 @@ class Generator(LLMAgent):
                     queries = [q.strip().strip('"') for q in queries]
                     # Remove empty queries
                     queries = [q for q in queries if q]
-                assert queries, "Queries must be provided."
+                # assert queries, "Queries must be provided."
+                if not queries:
+                    logger.warning(f"Empty queries for {item}")
+                    queries = [question[0] if len(question) == 1 else question[i]]
                 reasoning = item.get('reasoning', "")
                 output.append(
                     decompose_and_answer.QueriesGenerationOutput(queries=queries, reasoning=reasoning)

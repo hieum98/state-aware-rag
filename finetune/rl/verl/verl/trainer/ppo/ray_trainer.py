@@ -912,14 +912,16 @@ class RayPPOTrainer:
             match_indices = [i for i, u in enumerate(x2.non_tensor_batch["uid"]) if u == uid]
             num_repeats = len(match_indices)
             if num_repeats == 0:
-                raise ValueError(f"No matching 'uid' found in the second DataProto for uid: {uid}")
+                continue
             if num_repeats > 1:
                 _x1 = _x1.repeat(repeat_times=num_repeats)
             _x2 = x2[match_indices]
             data = _x1.union(_x2)
             all_data.append(data)
-            
+        if len(all_data) == 0:
+            return None
         merged_data = DataProto.concat(all_data)
+        merged_data.non_tensor_batch["uid"] = merged_data.non_tensor_batch.pop("_id")
         return merged_data
         
     def fit(self):
@@ -1033,10 +1035,10 @@ class RayPPOTrainer:
 
                             del gen_baseline_batch, gen_baseline_output
 
-                    print(f"batch_info before merge: {batch.get_data_info()}")
-                    print(f"gen_batch_output_info: {gen_batch_output.get_data_info()}")
                     batch = self._merge_data(batch, gen_batch_output)
-                    print(f"batch_info after merge: {batch.get_data_info()}")
+                    if batch is None:
+                        print("Warning: No matching uid found between original batch and generated batch. Skipping.")
+                        continue
 
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)

@@ -36,7 +36,7 @@ from state_aware_rag.agents.utils import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("LOGLEVEL", "INFO"))
+logger.setLevel(os.getenv("LOGGING_LEVEL", "INFO"))
 class NodeType(Enum):
     # Node type for user question, i.e., the root node
     USER_QUESTION = "USER_QUESTION"
@@ -136,9 +136,10 @@ class ReasoningNode(NodeMixin):
     def set_rollout_id(self, rollout_id):
         self.rollout_id = rollout_id
     
-    def get_node(self):
+    def get_node(self, ignore_hash: bool=False):
         node = copy.deepcopy(self.state)
-        node['hash'] = hash(self)
+        if not ignore_hash:
+            node['hash'] = hash(self)
         node['memory'] = self.memory if self.memory else []
         node['user_question'] = self.node_config['user_question']
         node['golden_answer'] = self.node_config['golden_answer']
@@ -152,7 +153,7 @@ class ReasoningNode(NodeMixin):
         return node
 
     def __hash__(self):
-        node_data = self.get_node()
+        node_data = self.get_node(ignore_hash=True)
         node_data.pop('rollout_id', None)  # Exclude rollout_id from hash
         node_str = json.dumps(node_data, sort_keys=True)
         return int(sha256(node_str.encode('utf-8')).hexdigest(), 16)
@@ -163,7 +164,8 @@ class ReasoningNode(NodeMixin):
         return hash(self) == hash(other)
 
     def __str__(self):
-        return pprint.pformat(self.get_node(), indent=2)
+        node_data = self.get_node()
+        return pprint.pformat(node_data, indent=2)
     
     def is_terminal(self):
         return self.node_type == NodeType.FINAL_ANSWER or self.depth > self.max_depth
@@ -175,7 +177,8 @@ class ReasoningNode(NodeMixin):
         print(self)
 
     def generate_children(self):
-        def read_results(results):
+        async def task_execute(tasks):
+            results = await asyncio.gather(*[task() for task in tasks])
             children: List['ReasoningNode'] = []
             all_explored_info: List[str] = []
             for res in results:
@@ -196,23 +199,20 @@ class ReasoningNode(NodeMixin):
             tasks = [self.generate_subQA_node]
             if not self.is_cot:
                 tasks.extend([self.generate_rephrase_question_node, self.generate_final_answer_node])
-            results = asyncio.run(asyncio.gather(*[task() for task in tasks]))
-            children, all_explored_info = read_results(results)
+            children, all_explored_info = asyncio.run(task_execute(tasks))
         elif self.node_type == NodeType.SUB_QA_NODE:
             tasks = [self.generate_subQA_node]
             if not self.is_cot:
                 tasks.extend([self.generate_self_corrected_node, self.generate_synthesis_node,
                               self.generate_rephrase_question_node, self.generate_subQA_node])
-            results = asyncio.run(asyncio.gather(*[task() for task in tasks]))
-            children, all_explored_info = read_results(results)
+            children, all_explored_info = asyncio.run(task_execute(tasks))
         elif self.node_type == NodeType.REPHASED_QUESTION_NODE:
             sub_qa_nodes, explored_info = asyncio.run(self.generate_subQA_node())
             children = sub_qa_nodes if sub_qa_nodes else []
             all_explored_info = explored_info if explored_info else []
         elif self.node_type == NodeType.SELF_CORRECTED_NODE:
             tasks = [self.generate_synthesis_node, self.generate_subQA_node]
-            results = asyncio.run(asyncio.gather(*[task() for task in tasks]))
-            children, all_explored_info = read_results(results)
+            children, all_explored_info = asyncio.run(task_execute(tasks))
         elif self.node_type == NodeType.SYNTHESIS_NODE:
             sub_qa_nodes, explored_info = asyncio.run(self.generate_subQA_node())
             children = sub_qa_nodes if sub_qa_nodes else []
@@ -284,7 +284,8 @@ class ReasoningNode(NodeMixin):
         }
         instance_id, _ = await self.generator.create()
         response, _, _ = await self.generator.execute(instance_id, agent_input)
-        response: Optional[List[decompose_and_answer.QueriesGenerationOutput]] = response.get('generated_queries', None)
+        await self.generator.release(instance_id)
+        response: Optional[List[decompose_and_answer.QueriesGenerationOutput]] = response.get('output', None)
         logger.info(f"Generated queries response: {response}")
         if not response:
             logger.warning(f"No exploration output from generator for question: {question}")
@@ -303,6 +304,7 @@ class ReasoningNode(NodeMixin):
         }
         instance_id, _ = await self.retriever.create()
         response, _, _ = await self.retriever.execute(instance_id, agent_input)
+        await self.retriever.release(instance_id)
         retrieval_docs = response.get('retrieval_docs', None)
         if isinstance(retrieval_docs, list) and all(isinstance(x, list) for x in retrieval_docs):
             retrieval_docs = sum(retrieval_docs, [])
@@ -320,6 +322,7 @@ class ReasoningNode(NodeMixin):
                 'question': question
             }
         tasks = []
+        all_instance_ids = []
         for doc in retrieval_docs:
             meta_info['document'] = doc
             agent_input = {
@@ -331,12 +334,16 @@ class ReasoningNode(NodeMixin):
             }
             instance_id, _ = await self.extractor.create()
             tasks.append(self.extractor.execute(instance_id, agent_input))
+            all_instance_ids.append(instance_id)
         responses = await asyncio.gather(*tasks)
+        for instance_id in all_instance_ids:
+            await self.extractor.release(instance_id)
         information = []
         if not responses:
             logger.warning(f"No exploration output from extractor for question: {question} at depth {self.depth}")
             return None
         for resp in responses:
+            resp, _, _ = resp
             resp: Optional[List[extract.ExtractOutput]] = resp.get('extracted_info', None)
             if not resp:
                 continue
@@ -380,6 +387,7 @@ class ReasoningNode(NodeMixin):
             }
             instance_id, _ = await self.extractor.create()
             response, _, _ = await self.extractor.execute(instance_id, agent_input)
+            await self.extractor.release(instance_id)
             response: Optional[List[extract.ExtractOutput]] = response.get('extracted_info', None)
             if not response:
                 logger.warning(f"No reflection output from extractor for question ID {question_id} at depth {self.depth}")
@@ -431,6 +439,7 @@ class ReasoningNode(NodeMixin):
         }
         instance_id, _ = await self.extractor.create()
         response, _, _ = await self.extractor.execute(instance_id, agent_input)
+        await self.extractor.release(instance_id)
         response: Optional[List[extract.ExtractOutput]] = response.get('extracted_info', None)
         if not response:
             logger.warning(f"No memory update output from extractor for question ID {question_id} at depth {self.depth}")
@@ -489,12 +498,13 @@ class ReasoningNode(NodeMixin):
             return None, explored_info
 
         agent_input = {
-            'generator_fn': 'finalize',
+            'generate_fn': 'finalize',
             'question_list': user_question,
             'context_list': context
         }
         instance_id, _ = await self.generator.create()
         response, _, _ = await self.generator.execute(instance_id, agent_input)
+        await self.generator.release(instance_id)
         response: Optional[List[finalize.FinalizeOutput]] = response.get('output', None)
         logger.info(f"Final answer generation output: {response}")
         if not response:
@@ -514,12 +524,12 @@ class ReasoningNode(NodeMixin):
                 answer = detailed_answer = reasoning
             elif not answer and detailed_answer:
                 answer = detailed_answer
-                detailed_answer = f"{detailed_answer}\n{reasoning}"
+                # detailed_answer = f"{detailed_answer}\nReasoning: {reasoning}"
             elif not detailed_answer and answer:
                 detailed_answer = answer
-                detailed_answer = f"{answer}\n{reasoning}"
-            else:
-                detailed_answer = f"{detailed_answer}\n{reasoning}"
+                # detailed_answer = f"{answer}\nReasoning: {reasoning}"
+            # else:
+            #     detailed_answer = f"{detailed_answer}\nReasoning: {reasoning}"
             logger.info(f"Final Answer: {answer}\nDetailed Answer: {detailed_answer}\nConfidence: {confidence}")
             if detailed_answer in all_answers:
                 continue
@@ -544,15 +554,16 @@ class ReasoningNode(NodeMixin):
         reflection_str = format_memory(reflection) if reflection else ""
         exploration_str = format_memory(exloration) if exloration else ""
         important_info = format_context(memory=reflection_str, reasoning_trace=reasoning_trace, explored_data=exploration_str)
-        logger.info(f"Generating subQA for rephrased question: {sub_question} at depth {self.depth}")
+        logger.info(f"Generating subanswer for  question: {sub_question} at depth {self.depth}")
         logger.info(f"Important info for subQA:\n{important_info}")
         instance_id, _ = await self.generator.create()
         agent_input = {
-            'generator_fn': 'generate_answer',
+            'generate_fn': 'generate_answer',
             'question_list': sub_question,
             'context_list': important_info
         }
         response, _, _ = await self.generator.execute(instance_id, agent_input)
+        await self.generator.release(instance_id)
         response: Optional[List[decompose_and_answer.AnswerOutput]] = response.get('output', None)
         logger.info(f"SubQA generation output: {response}")
         if not response:
@@ -570,7 +581,8 @@ class ReasoningNode(NodeMixin):
                 sub_answer = reasoning
             elif not reasoning and sub_answer:
                 reasoning = sub_answer
-                sub_answer = f"{sub_answer}\n{reasoning}"
+            # else:
+            #     reasoning = f"{sub_answer}\nReasoning: {reasoning}"
             logger.info(f"Sub Answer: {sub_answer}\nReasoning: {reasoning}\nConfidence: {confidence}")
             if sub_answer in all_answers:
                 continue
@@ -600,12 +612,13 @@ class ReasoningNode(NodeMixin):
             logger.info(f"Decomposing question: {user_question} at depth {self.depth}")
             logger.info(f"Context for decomposition:\n{context}")
             agent_input = {
-                'generator_fn': 'generate_subquestion',
+                'generate_fn': 'generate_subquestion',
                 'question_list': user_question,
                 'context_list': context
             }
             instance_id, _ = await self.generator.create()
             response, _, _ = await self.generator.execute(instance_id, agent_input)
+            await self.generator.release(instance_id)
             response: Optional[List[decompose_and_answer.SubquestionOutput]] = response.get('output', None)
             if not response:
                 logger.warning(f"No subquestion output from generator for question: {user_question} at depth {self.depth}")
@@ -652,11 +665,12 @@ class ReasoningNode(NodeMixin):
             logger.warning(f"Empty question for rephrasing at depth {self.depth}")
             return None, None
         agent_input = {
-            'generator_fn': 'rephase_question',
+            'generate_fn': 'rephase_question',
             'question_list': question,
         }
         instance_id, _ = await self.generator.create()
         response, _, _ = await self.generator.execute(instance_id, agent_input)
+        await self.generator.release(instance_id)
         response: Optional[List[rephase_question.RephraseQuestionOutput]] = response.get('output', None)
         logger.info(f"Rephrasing output: {response}")
         if not response:
@@ -698,13 +712,14 @@ class ReasoningNode(NodeMixin):
         logger.info(f"Generating self-corrected reasoning for sub-question: {sub_question} at depth {self.depth}")
         logger.info(f"Important info for self-correction:\n{important_info}")
         agent_input = {
-            'generator_fn': 'self_correct',
+            'generate_fn': 'self_correct',
             'question_list': sub_question,
             'context_list': important_info,
             'current_answer_list': sub_answer
         }
         instance_id, _ = await self.generator.create()
         response, _, _ = await self.generator.execute(instance_id, agent_input)
+        await self.generator.release(instance_id)
         response: Optional[List[self_correct.SelfCorrectOutput]] = response.get('output', None)
         logger.info(f"Self-correction output: {response}")
         if not response:
@@ -722,8 +737,6 @@ class ReasoningNode(NodeMixin):
                 corrected_answer = reasoning
             elif not reasoning and corrected_answer:
                 reasoning = corrected_answer
-            else:
-                corrected_answer = f"{corrected_answer}\n{reasoning}"
             logger.info(f"Corrected Answer: {corrected_answer}\nReasoning: {reasoning}\nConfidence: {confidence}")
             if corrected_answer in all_answers:
                 continue
@@ -751,12 +764,13 @@ class ReasoningNode(NodeMixin):
         logger.info(f"Generating synthesis reasoning for question: {user_question} at depth {self.depth}")
         logger.info(f"Context for synthesis:\n{context}")
         agent_input = {
-            'generator_fn': 'generate_synthesis',
+            'generate_fn': 'generate_synthesis',
             'question_list': user_question,
             'context_list': context
         }
         instance_id, _ = await self.generator.create()
         response, _, _ = await self.generator.execute(instance_id, agent_input)
+        await self.generator.release(instance_id)
         response: Optional[List[synthesize.SynthesizeOutput]] = response.get('output', None)
         logger.info(f"Synthesis output: {response}")
         if not response:

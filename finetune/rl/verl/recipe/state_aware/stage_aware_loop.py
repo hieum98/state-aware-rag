@@ -1,10 +1,11 @@
 import asyncio
 import copy
+from hashlib import sha256
 import json
 import logging
 import os
 import random
-from typing import Any, Optional
+from typing import Any, List, Optional
 from uuid import uuid4
 from omegaconf import OmegaConf
 from transformers import AutoConfig
@@ -18,14 +19,20 @@ from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutp
 from verl.utils.profiler import simple_timer
 from vllm.reasoning.deepseek_r1_reasoning_parser import DeepSeekR1ReasoningParser
 
-from state_aware_rag.agents.prompts.decompose_and_answer import AnswerOutput, SubquestionOutput
-from state_aware_rag.agents.prompts.extract import ExtractOutput
+from state_aware_rag.agents.prompts import (
+    decompose_and_answer,
+    evaluate,
+    extract,
+    finalize,
+    rephase_question,
+    self_correct,
+    synthesize
+    )
 from state_aware_rag.agents.agents import GeneratorAgent, RetrievalAgent, EvaluatorAgent
-from state_aware_rag.agents.prompts.finalize import FinalizeOutput
 from state_aware_rag.agents.utils import format_reasoning_trace, format_memory, format_context, format_extractor_messages, extract_info_from_text, format_reflection_context
 
 logger = logging.getLogger(__file__)
-logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
 
 @register("state_aware")
 class StageAwareLoop(AgentLoopBase):
@@ -38,8 +45,8 @@ class StageAwareLoop(AgentLoopBase):
         cls.apply_chat_template_kwargs = config.data.get("apply_chat_template_kwargs", {})
         cls.prompt_length = config.actor_rollout_ref.rollout.prompt_length
         cls.response_length = config.actor_rollout_ref.rollout.response_length
-        # prefer explicit arg, fallback to legacy hydra key if present
-        cls.max_iterations = max_iterations if max_iterations is not None else kwargs.get("max_interations", 5)
+        # prefer explicit arg, fallback to correctly spelled legacy kwarg if present
+        cls.max_iterations = max_iterations if max_iterations is not None else kwargs.get("max_iterations", 5)
 
         model_config = AutoConfig.from_pretrained(config.actor_rollout_ref.model.path, trust_remote_code=True)
         if model_config.model_type == 'qwen3':
@@ -95,154 +102,123 @@ class StageAwareLoop(AgentLoopBase):
 
         memory_data: list[str] = []
         reasoning_traces: list[str] = []
-        final_answer = "Cannot answer the question based on the provided information."
+        final_answer = None
 
         # Metrics
         metrics_model = AgentLoopMetrics()
-        _timings: dict[str, float] = {}
 
         # Accumulate multiple training examples per input
-        all_prompt_ids: list[list[int]] = []
-        all_response_ids: list[list[int]] = []
-        all_response_masks: list[list[int]] = []
-        all_response_logprobs: list[Optional[list[float]]] = []
-        structure_reward = []
-
-        step_data = []
-
-        extracted_cache = {}
+        all_train_data = []
 
         for i in range(self.max_iterations):
             # Step 1: Subquestion generation
-            with simple_timer('subquestion_generation', _timings):
-                subq_result = await self._subquestion_generation(
-                    question, memory_data, reasoning_traces, generator_kwargs
-                )
+            subq_result = await self._subquestion_generation(
+                question, memory_data, reasoning_traces, generator_kwargs
+            )
             answerable = subq_result.get("answerable_main_question", False)
             sub_question = subq_result.get("subquestion", question)
+            if not sub_question or not sub_question.strip():
+                logger.warning(f"Subquestion generation returned empty subquestion at iteration {i}. Ending loop.")
+                sub_question = question
+                answerable = True
 
             # Step 2: Retrieval
-            with simple_timer('document_retrieval', _timings):
-                retrieval_docs = await self._retrieve(sub_question, retrieval_kwargs)
+            retrieval_docs = await self._retrieve(sub_question, retrieval_kwargs)
             if not retrieval_docs:
                 logger.warning(f"Retrieval returned no documents for question: {sub_question}")
+                final_answer = format_memory(reasoning_traces) if reasoning_traces else None
                 break
 
             # Step 3: Information consolidation
             all_extractions: list[str] = []
-            should_extract_documents = []
-            for doc in retrieval_docs:
-                consolidate_entry = extracted_cache.get((sub_question, doc), None)
-                if consolidate_entry is None:
-                    should_extract_documents.append(doc)
-                else:
-                    if consolidate_entry.information:
-                        all_extractions.extend(consolidate_entry.information)
-
-            extractor_messages = format_extractor_messages(
-                question=[sub_question] * len(should_extract_documents), context=should_extract_documents
+            is_valid: list[bool] = []
+            outputs = []
+            prompt_ids = []
+            consolidate_outputs, extractor_prompt_ids_list = await self._extract(
+                sub_question, retrieval_docs, sampling_params
             )
-            tokenize_tasks = []
-            for messages in extractor_messages:
-                tokenize_tasks.append(self.loop.run_in_executor(
-                    None,
-                    lambda: self.tokenizer.apply_chat_template(
-                        messages, add_generation_prompt=True, tokenize=True, **self.apply_chat_template_kwargs
-                    ),
-                ))
-            extractor_prompt_ids_list = await asyncio.gather(*tokenize_tasks) # List of prompt_ids for each document
-            consolidate_tasks = []
-            for extractor_prompt_ids in extractor_prompt_ids_list:
-                request_id = uuid4().hex
-                consolidate_tasks.append(
-                    self.server_manager.generate(
-                        request_id=request_id, prompt_ids=extractor_prompt_ids, sampling_params=sampling_params
-                    )
-                )
-            with simple_timer("extract_explored_data", _timings):
-                consolidate_outputs = await asyncio.gather(*consolidate_tasks)
-            
-            all_is_valid = []
-            for output in consolidate_outputs:
-                consolidate_ids = output.token_ids
-                consolidate_txt = await self.loop.run_in_executor(
-                    None,
-                    lambda: self.tokenizer.decode(consolidate_ids, skip_special_tokens=True)
-                )
-                consolidate_entry, is_valid = self.parse_extractor_outputs(consolidate_txt)
-                all_is_valid.append(is_valid)
-                extracted_cache[(sub_question, doc)] = consolidate_entry
-                if consolidate_entry and consolidate_entry.information:
+            for output, extractor_prompt_ids in zip(consolidate_outputs, extractor_prompt_ids_list, strict=True):
+                consolidate_txt = self.tokenizer.decode(output.token_ids, skip_special_tokens=True)
+                consolidate_entry, _is_valid = self.parse_extractor_outputs(consolidate_txt)
+                prompt_ids.append(extractor_prompt_ids)
+                outputs.append(output)
+                is_valid.append(_is_valid)
+                if consolidate_entry.information:
                     all_extractions.extend(consolidate_entry.information)
+
             all_extractions = list(set(all_extractions))  # Deduplicate
-            # Add prompt and response ids for training for each consolidation
-            for extractor_prompt_ids, output, is_valid in zip(extractor_prompt_ids_list, consolidate_outputs, all_is_valid):
-                all_prompt_ids.append(extractor_prompt_ids)
-                all_response_ids.append(output.token_ids)
-                all_response_masks.append([1] * len(output.token_ids))
-                all_response_logprobs.append(output.log_probs if output.log_probs else None)
-                structure_reward.append(1 if is_valid else 0)
+            train_data = {
+                'sub_question': sub_question,
+                'explore_input_ids_list': prompt_ids,
+                'explore_output_list': outputs,
+                'explore_is_valid': is_valid,
+            }
+
+            # Reflection if not answerable
+            if answerable or not memory_data:
+                all_reflections = memory_data
+            else:
+                memory_str = format_memory(memory_data) if memory_data else ""
+                reflection_output, reflection_prompt_ids = await self._extract(
+                    sub_question, [memory_str], sampling_params
+                )
+                reflection_output = reflection_output[0]
+                reflection_prompt_ids = reflection_prompt_ids[0]
+                reflection_txt =  self.tokenizer.decode(reflection_output.token_ids, skip_special_tokens=True)
+                reflection_entry, _is_valid = self.parse_extractor_outputs(reflection_txt)
+                train_data['reflection_input_ids'] = [reflection_prompt_ids]
+                train_data['reflection_output'] = [reflection_output]
+                train_data['reflection_is_valid'] = [_is_valid]
+                all_reflections = reflection_entry.information
 
             # Step 4: Subanswer generation
-            with simple_timer('subanswer_generation', _timings):
-                sub_answer = await self._subanswer_generation(
-                    sub_question, all_extractions, memory_data, reasoning_traces, generator_kwargs, answerable=answerable
-                )
-            if (sub_question, sub_answer) not in step_data:
-                step_data.append((sub_question, sub_answer))
-            if answerable and sub_answer != "Answer generation failed." and sub_answer.strip():
-                final_answer = sub_answer
-                reasoning_traces.append(f"{sub_question}\n{sub_answer}")
+            sub_answer = await self._subanswer_generation(
+                question=sub_question if not answerable else question,
+                explored_data=all_extractions,
+                memory_data=all_reflections,
+                reasoning_trace=reasoning_traces,
+                main_question_answerable=answerable,
+                agent_kwargs=generator_kwargs,
+            )
+            if sub_answer is None or not sub_answer.strip():
+                final_answer = format_memory(reasoning_traces) if reasoning_traces else None
                 break
+
+            if answerable:
+                final_answer = sub_answer
+                all_train_data.append(train_data)
+                break
+            else:
+                train_data["sub_answer"] = sub_answer
 
             # Step 5: Update memory and reasoning traces
             reasoning_step = f"{sub_question}\n{sub_answer}"
             if reasoning_step not in reasoning_traces:
                 reasoning_traces.append(reasoning_step)
-                same_reasoning = False
             else:
-                same_reasoning = True
+                all_train_data.append(train_data)
+                final_answer = format_memory(reasoning_traces) if reasoning_traces else None
+                break
+
             if all_extractions:
                 extraction_text = format_memory(all_extractions)
                 current_memory = format_memory(memory_data)
                 context = format_reflection_context(current_memory=current_memory, explored_data=extraction_text)
-                update_memory_entry = extracted_cache.get((question, context), None)
-                if update_memory_entry is None:
-                    update_memory_messages = format_extractor_messages(question=question, context=context)
-                    update_memory_input_ids = await self.loop.run_in_executor(
-                        None,
-                        lambda: self.tokenizer.apply_chat_template(
-                            update_memory_messages, add_generation_prompt=True, tokenize=True, **self.apply_chat_template_kwargs
-                        ),
-                    )
-                    request_id = uuid4().hex
-                    with simple_timer("update_memory", _timings):
-                        output = await self.server_manager.generate(
-                            request_id=request_id, prompt_ids=update_memory_input_ids, sampling_params=sampling_params
-                        )
-                    update_memory_ids = output.token_ids
-                    update_memory_txt = await self.loop.run_in_executor(
-                        None, 
-                        lambda: self.tokenizer.decode(update_memory_ids, skip_special_tokens=True)
-                    )
-                    update_memory_entry, is_valid = self.parse_extractor_outputs(update_memory_txt)
-                    if is_valid:
-                        extracted_cache[(question, context)] = update_memory_entry
-                    structure_reward.append(1 if is_valid else 0)
-                    all_prompt_ids.append(update_memory_input_ids)
-                    all_response_ids.append(output.token_ids)
-                    all_response_masks.append([1] * len(output.token_ids))
-                    all_response_logprobs.append(output.log_probs if output.log_probs else None)
-                    
-                if update_memory_entry and update_memory_entry.information:
-                    _memory_data = update_memory_entry.information
-                    _memory_data = list(set(_memory_data))  # Deduplicate
-                    if _memory_data == memory_data and same_reasoning:
-                        break
-                    memory_data = _memory_data
-            else:
-                if same_reasoning:
-                    break # No new information and same reasoning, break the loop
+                update_memory_output, update_memory_prompt_ids = await self._extract(
+                    question, [context], sampling_params
+                )
+                update_memory_output = update_memory_output[0]
+                update_memory_prompt_ids = update_memory_prompt_ids[0]
+                update_memory_txt = self.tokenizer.decode(update_memory_output.token_ids, skip_special_tokens=True)
+                update_memory_entry, is_valid = self.parse_extractor_outputs(update_memory_txt)
+                train_data['update_memory_input_ids'] = [update_memory_prompt_ids]
+                train_data['update_memory_output'] = [update_memory_output]
+                train_data['update_memory_is_valid'] = [is_valid]
+                _memory_data = update_memory_entry.information
+                _memory_data = list(set(_memory_data))  # Deduplicate
+                _memory_data.sort()
+                memory_data = _memory_data
+            all_train_data.append(train_data)
 
         # Compute rewards for the trajectory
         reward_tasks = []
@@ -253,47 +229,115 @@ class StageAwareLoop(AgentLoopBase):
                 self._evaluate_final_answer(question, final_answer, correct_answer, evaluator_kwargs)
             )
             is_outcome_aware = True
-        # Path-aware reward
+        
+        qa_pairs = []
+        train_data = []
+        i = 0
+        print(f"Total training steps collected: {len(all_train_data)}")
+        print(f"All training data: {json.dumps(all_train_data, indent=2)}")
+        for data in all_train_data:
+            if "sub_question" in data and "sub_answer" in data:
+                # Only keep the training data which has valid sub_question and sub_answer
+                if data["sub_question"] and data["sub_answer"]:
+                    qa_pairs.append((data["sub_question"], data["sub_answer"], i))
+                    reward_tasks.append(self._judge_answer(data["sub_question"], data["sub_answer"], evaluator_kwargs))
+                    train_data.append(data) 
+                    i = i + 1
+            else:
+                # Keep the memory update and reflection data
+                train_data.append(data)
+                i = i + 1
         if reasoning_traces:
-            sub_questions = [q for q, a in step_data]
-            sub_answers = [a for q, a in step_data]
-            for sub_q, sub_a in zip(sub_questions, sub_answers):
-                reward_tasks.append(self._judge_answer(sub_q, sub_a, evaluator_kwargs))
             reward_tasks.append(
                 self._evaluate_path(reasoning_traces, question, correct_answer, evaluator_kwargs)
             )
-        if reward_tasks:
-            with simple_timer('reward_computation', _timings):
-                rewards = await asyncio.gather(*reward_tasks)
-            outcome_reward = rewards[0] if is_outcome_aware else None
-            path_rewards = rewards[1:] if is_outcome_aware else rewards
-            path_reward = sum(path_rewards) / len(path_rewards) if path_rewards else None
-            if outcome_reward and path_reward:
-                reward = 0.7 * outcome_reward + 0.3 * path_reward
-            elif outcome_reward:
-                reward = outcome_reward
-            elif path_reward:
-                reward = path_reward
-            else:
-                reward = 0.001
-        else:
-            logger.warning("No reward tasks were created. Setting total_reward to 0.1")
-            reward = 0.001
 
-        # Pack outputs
+        all_prompt_ids = []
+        all_response_ids = []
+        all_response_masks = []
+        all_response_logprobs = []
+        instance_id = []
+        reward = []
+        rewards = await asyncio.gather(*reward_tasks)
+        outcome_reward = rewards[0] if is_outcome_aware else None
+        rewards = rewards[1:] if is_outcome_aware else rewards
+        whole_path_reward = rewards[-1] if reasoning_traces else None
+        rewards = rewards[:-1] if reasoning_traces else rewards
+        assert len(rewards) == len(qa_pairs), f"Number of rewards {len(rewards)} does not match number of QA pairs {len(qa_pairs)}"
+        for (q, a, idx), r in zip(qa_pairs, rewards, strict=True):
+            train_data[idx]['step_reward'] = r
+        avg_step_reward = sum(rewards) / len(rewards) if rewards else None
+        for data in train_data:
+            if "explore_input_ids_list" in data and "explore_output_list" in data:
+                qa_pair = f"{example_id}-{data['sub_question']}-explore"
+                _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
+                instance_id.extend([_id] * len(data["explore_input_ids_list"]))
+                all_prompt_ids.extend(data["explore_input_ids_list"])
+                all_response_ids.extend([output.token_ids for output in data["explore_output_list"]])
+                all_response_masks.extend([[1]*len(output.token_ids) for output in data["explore_output_list"]])
+                all_response_logprobs.extend([output.log_probs if output.log_probs else None for output in data["explore_output_list"]])
+                structure_reward = [1 if is_valid else 0.2 for is_valid in data["explore_is_valid"]]
+                step_reward = data["step_reward"]
+                if whole_path_reward:
+                    step_reward = 0.75 * step_reward + 0.25 * whole_path_reward
+                logger.debug(f"Structure rewards for exploration: {structure_reward}")
+                logger.debug(f"Step reward for exploration: {step_reward}")
+                reward.extend([step_reward * sr for sr in structure_reward])
+            if "reflection_input_ids" in data and "reflection_output" in data:
+                qa_pair = f"{example_id}-{data['sub_question']}-reflection"
+                _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
+                instance_id.append(_id)
+                all_prompt_ids.append(data["reflection_input_ids"][0])
+                all_response_ids.append(data["reflection_output"][0].token_ids)
+                all_response_masks.append([1]*len(data["reflection_output"][0].token_ids))
+                all_response_logprobs.append(data["reflection_output"][0].log_probs if data["reflection_output"][0].log_probs else None)
+                structure_reward = [1 if data["reflection_is_valid"][0] else 0.2]
+                step_reward = data["step_reward"]
+                if whole_path_reward:
+                    step_reward = 0.75 * step_reward + 0.25 * whole_path_reward
+                logger.debug(f"Structure reward for reflection: {structure_reward[0]}")
+                logger.debug(f"Step reward for reflection: {step_reward}")
+                reward.append(step_reward * structure_reward[0])
+            if "update_memory_input_ids" in data and "update_memory_output" in data:
+                qa_pair = f"{example_id}-{question}-memory_update"
+                _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
+                instance_id.append(_id)
+                if outcome_reward is None:
+                    if whole_path_reward:
+                        outcome_reward = whole_path_reward
+                    else:
+                        outcome_reward = avg_step_reward
+                if outcome_reward is None:
+                    continue
+                else:
+                    if whole_path_reward:
+                        reward_value = 0.9 * outcome_reward + 0.1 * whole_path_reward
+                    else:
+                        reward_value = outcome_reward
+                logger.debug(f"Using reward {reward_value} for memory update.")
+                all_prompt_ids.append(data["update_memory_input_ids"][0])
+                all_response_ids.append(data["update_memory_output"][0].token_ids)
+                all_response_masks.append([1]*len(data["update_memory_output"][0].token_ids))
+                all_response_logprobs.append(data["update_memory_output"][0].log_probs if data["update_memory_output"][0].log_probs else None)
+                structure_reward = [1 if data["update_memory_is_valid"][0] else 0.2]
+                logger.debug(f"Structure reward for memory update: {structure_reward[0]}")
+                reward.append(reward_value * structure_reward[0])
+
         assert len(all_prompt_ids) == len(all_response_ids) == len(all_response_masks) == len(all_response_logprobs), (
             f"Length mismatch: {len(all_prompt_ids)} prompts, {len(all_response_ids)} responses, {len(all_response_masks)} masks, {len(all_response_logprobs)} logprobs"
         )
-        assert len(all_prompt_ids) == len(structure_reward), (
-            f"Length mismatch: {len(all_prompt_ids)} prompts, {len(structure_reward)} structure rewards"
-        )
+        assert len(all_prompt_ids) == len(reward), f"Number of rewards {len(reward)} does not match number of training examples {len(all_prompt_ids)}"
+        assert len(all_prompt_ids) == len(instance_id), f"Number of instance IDs {len(instance_id)} does not match number of training examples {len(all_prompt_ids)}"
         all_prompt_ids = [ids[: self.prompt_length] for ids in all_prompt_ids]
         all_response_ids = [ids[: self.response_length] for ids in all_response_ids]
         all_response_masks = [mask[: self.response_length] for mask in all_response_masks]
         all_response_logprobs = [logprobs[: self.response_length] if logprobs else None for logprobs in all_response_logprobs]
-
+        logger.info(f"Generated {len(all_prompt_ids)} training examples for question: {question}")
+        logger.info(f"Rewards: {reward}")
         outputs: list[AgentLoopOutput] = []
         for i in range(len(all_prompt_ids)):
+            reward_score = reward[i] 
+            _id = instance_id[i] 
             outputs.append(
                 AgentLoopOutput(
                     prompt_ids=all_prompt_ids[i],
@@ -302,15 +346,11 @@ class StageAwareLoop(AgentLoopBase):
                     response_logprobs=all_response_logprobs[i],
                     multi_modal_data={},
                     num_turns=2,
-                    reward_score=reward if structure_reward[i]==1 else 0.2*reward,  # downweight invalid structure
+                    reward_score=reward_score,
                     metrics=metrics_model,
-                    extra_fields={'uid': example_id}
+                    extra_fields={'uid': example_id, '_id': _id}
                 )
             )
-        if outputs:
-            logger.debug(f"Example AgentLoopOutput: {outputs[0]}")
-        else:
-            logger.warning("No outputs were generated in the Agent Loop.")
         if len(outputs) % 8 != 0:
             # Add duplicates to make the batch size a multiple of 8
             n_to_add = 8 - (len(outputs) % 8)
@@ -323,13 +363,13 @@ class StageAwareLoop(AgentLoopBase):
         logger.debug(f"Extractor Output Text: {output_txt}")
         if output_txt:
             try:
-                extractor_output = ExtractOutput.model_validate_json(output_txt)
+                extractor_output = extract.ExtractOutput.model_validate_json(output_txt)
                 is_valid = True
             except Exception as e:
                 # logger.warning(f"Failed to decode extractor output: {e}")
                 is_valid = False
-                keys = ExtractOutput.model_fields.keys()
-                value_types = [field.annotation.__name__ for field in ExtractOutput.model_fields.values()]
+                keys = extract.ExtractOutput.model_fields.keys()
+                value_types = [field.annotation.__name__ for field in extract.ExtractOutput.model_fields.values()]
                 extractor_output = extract_info_from_text(text, keys, value_types)
                 info = extractor_output.get("information", [])
                 if isinstance(info, str):
@@ -339,96 +379,97 @@ class StageAwareLoop(AgentLoopBase):
                 decision = extractor_output.get("decision", "not_relevant")
                 if decision not in ["relevant", "not_relevant"]:
                     decision = "not_relevant"
-                extractor_output = ExtractOutput(
+                extractor_output = extract.ExtractOutput(
                     information=info,
                     decision=decision,
                     reasoning=""
                 )
         else:
-            is_valid = False
-            extractor_output = ExtractOutput(
-                information=[],
-                decision="not_relevant",
-                reasoning=""
-            )
+            return extract.ExtractOutput(information=[], decision="not_relevant", reasoning=""), False
         logger.debug(f"Extractor Output Valid: {is_valid}")
         logger.debug(f"Extractor Output: {extractor_output}")
         return extractor_output, is_valid
     
-    async def _retrieve(self, query: str, agent_kwargs: dict[str, Any]):
-        instance_id = None
-        try:
-            kwargs = agent_kwargs or {}
-            instance_id, _ = await self.retriever_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            paramenters = {'retrieval_query_list': [query]}
-            retrieval_results, _, _ = await self.retriever_agent.execute(
-                instance_id=instance_id,
-                parameters=paramenters,
+    async def _extract(
+            self, 
+            question: str,
+            should_extract_documents: list[str],
+            sampling_params: dict[str, Any]
+        ):
+        extractor_messages = format_extractor_messages(
+                question=[question] * len(should_extract_documents), context=should_extract_documents
             )
-        except Exception as e:
-            logger.warning(f"Error when executing tool: {e}")
-            return ["Retrieval failed."]
-        finally:
-            if instance_id:
-                await self.retriever_agent.release(instance_id=instance_id)
+        extractor_prompt_ids_list = []
+        for messages in extractor_messages:
+            # logger.debug(f"Extractor messages: {messages}")
+            input_ids = self.tokenizer.apply_chat_template(
+                    messages, add_generation_prompt=True, tokenize=True, **self.apply_chat_template_kwargs
+                )
+            extractor_prompt_ids_list.append(input_ids)
+        consolidate_tasks = []
+        for extractor_prompt_ids in extractor_prompt_ids_list:
+            request_id = uuid4().hex
+            consolidate_tasks.append(
+                self.server_manager.generate(
+                    request_id=request_id, prompt_ids=extractor_prompt_ids, sampling_params=sampling_params
+                )
+            )
+        consolidate_outputs = await asyncio.gather(*consolidate_tasks)
+        logger.debug(f"Extractor generated outputs for {len(consolidate_outputs)} documents.")
+        logger.debug(f"Number of prompt ID sets: {len(extractor_prompt_ids_list)}")
+        assert len(consolidate_outputs) == len(extractor_prompt_ids_list), "Mismatch between outputs and prompt ID sets"
+        return consolidate_outputs, extractor_prompt_ids_list
+
+    async def _retrieve(self, query: str, agent_kwargs: dict[str, Any]):
+        instance_id, _ = await self.retriever_agent.create()
+        parameters = {'retrieval_query_list': [query], 'run_kwargs': agent_kwargs}
+        retrieval_results, _, _ = await self.retriever_agent.execute(
+            instance_id=instance_id,
+            parameters=parameters,
+        )
+        await self.retriever_agent.release(instance_id)
         retrieval_docs = retrieval_results.get("retrieval_docs", None)
         if retrieval_docs:
             retrieval_docs = retrieval_docs[0] # List of documents for the single query
-        
         if not isinstance(retrieval_docs, list):
-            retrieval_docs = ["Retrieval failed."]
+            retrieval_docs = []
         logger.debug(f"Retrieved {len(retrieval_docs)} documents for query: {query}")
         return retrieval_docs
         
     async def _subquestion_generation(
             self,
-            question: str,
+            user_question: str,
             memory_data: list[str],
             reasoning_trace: list[str],
             agent_kwargs: dict[str, Any],
             **kwargs
         ):
-        instance_id = None
-        memory = format_memory(memory_data)
+        memory_str = format_memory(memory_data) if memory_data else ""
         reasoning_trace = format_reasoning_trace(reasoning_trace)
-        context = format_context(memory=memory, reasoning_trace=reasoning_trace)
-        try:
-            kwargs = agent_kwargs or {}
-            instance_id, _ = await self.generator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            parameters = {
-                "generate_fn": "generate_subquestion",
-                "question_list": [question],
-                "context_list": [context],
-                "run_kwargs": kwargs.get("run_kwargs", {}),
-            }
-            generation_result, _, _ = await self.generator_agent.execute(
-                instance_id=instance_id,
-                parameters=parameters,
-            )
-            subquestion_output = generation_result.get("output", None)
-            if subquestion_output:
-                if isinstance(subquestion_output, list):
-                    subquestion_output = subquestion_output[0]
-            assert isinstance(subquestion_output, SubquestionOutput), f"subquestion_output is not of type SubquestionOutput: {subquestion_output}"
-        except Exception as e:
-            logger.warning(f"Error when executing tool: {e}")
-            # Fail-safe: return the original question as subquestion and mark it as not answerable
-            return {"answerable_main_question": False, "subquestion": question}
-        finally:
-            if instance_id:
-                await self.generator_agent.release(instance_id=instance_id)
-        subquestion = subquestion_output.subquestion
-        reasoning = subquestion_output.reasoning
-        is_answerable = subquestion_output.answerable_main_question
-        if is_answerable:
-            subquestion = question
-        if not subquestion:
-            if not reasoning:
-                subquestion = question
-            else:
-                subquestion = f"Based on the reasoning: {reasoning}, what is a relevant follow-up question to ask?"
-        logger.debug(f"Generated Subquestion: {subquestion}, Answerable: {is_answerable}, Reasoning: {reasoning}")
-        return {"answerable_main_question": is_answerable, "subquestion": subquestion}
+        context = format_context(memory=memory_str, reasoning_trace=reasoning_trace)
+        logger.info(f"Decomposing question: {user_question}")
+        logger.info(f"Context for decomposition:\n{context}")
+        agent_input = {
+            'generate_fn': 'generate_subquestion',
+            'question_list': user_question,
+            'context_list': context,
+            'run_kwargs': agent_kwargs,
+        }
+        instance_id, _ = await self.generator_agent.create()
+        response, _, _ = await self.generator_agent.execute(instance_id, agent_input)
+        await self.generator_agent.release(instance_id)
+        response: Optional[List[decompose_and_answer.SubquestionOutput]] = response.get('output', None)
+        if not response:
+            logger.warning(f"No subquestion output from generator for question: {user_question}")
+            return {"answerable_main_question": True, "subquestion": user_question}
+        logger.info(f"Decomposition output: {response}")
+        response: decompose_and_answer.SubquestionOutput = response[0]
+        answerable_main_question = response.answerable_main_question
+        sub_question = response.subquestion.strip()
+        if not sub_question:
+            logger.warning(f"No valid subquestion generated for question: {user_question}")
+            return {"answerable_main_question": True, "subquestion": user_question}
+        return {"answerable_main_question": answerable_main_question, "subquestion": sub_question}
 
     async def _subanswer_generation(
             self,
@@ -436,134 +477,137 @@ class StageAwareLoop(AgentLoopBase):
             explored_data: list[str],
             memory_data: list[str],
             reasoning_trace: list[str],
+            main_question_answerable: bool,
             agent_kwargs: dict[str, Any],
             **kwargs
         ):
-        instance_id = None
-        memory = format_memory(memory_data)
-        reasoning_trace = format_reasoning_trace(reasoning_trace)
-        explored_data = format_memory(explored_data)
-        context = format_context(memory, reasoning_trace, explored_data)
-        answerable = kwargs.get("answerable", False)
-        try:
-            kwargs = agent_kwargs or {}
-            instance_id, _ = await self.generator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            parameters = {
-                "generate_fn": "generate_answer" if not answerable else "finalize",
-                "question_list": [question],
-                "context_list": [context],
-                "run_kwargs": kwargs.get("run_kwargs", {}),
+        if main_question_answerable:
+            memory_str = format_memory(memory_data) if memory_data else ""
+            explored_str = format_memory(explored_data) if explored_data else ""
+            reasoning_trace = format_reasoning_trace(reasoning_trace)
+            context = format_context(memory=memory_str, reasoning_trace=reasoning_trace, explored_data=explored_str)
+            logger.info(f"Generating final answer for question: {question}")
+            logger.info(f"Context for final answer:\n{context}")
+            if not question or not question.strip():
+                logger.warning(f"Empty user question for final answer generation")
+                return None
+
+            agent_input = {
+                'generate_fn': 'finalize',
+                'question_list': question,
+                'context_list': context,
+                'run_kwargs': agent_kwargs,
             }
-            generation_result, _, _ = await self.generator_agent.execute(
-                instance_id=instance_id,
-                parameters=parameters,
-            ) # AnswerOutput
-            answer_output = generation_result.get("output", None)
-            if answer_output:
-                if isinstance(answer_output, list):
-                    answer_output = answer_output[0]
-            assert isinstance(answer_output, (AnswerOutput, FinalizeOutput)), f"answer_output is not of type AnswerOutput or FinalizeOutput: {answer_output}"
-            assert answer_output.answer or answer_output.detailed_answer, f"Both answer and detailed_answer are empty in answer_output: {answer_output}"
-        except Exception as e:
-            logger.warning(f"Error when executing tool: {e}")
-            return reasoning_trace # Fail-safe: return the current reasoning trace as the answer 
-        finally:
-            if instance_id:
-                await self.generator_agent.release(instance_id=instance_id)
-        full_answer = ""
-        answer = answer_output.answer
-        if answer:
-            full_answer += f"{answer}\n"
-        detailed_answer = answer_output.detailed_answer
-        if detailed_answer and detailed_answer != answer:
-            full_answer += f"{detailed_answer}\n"
-        reasoning = answer_output.reasoning
-        if reasoning:
-            full_answer += f"Reasoning: {reasoning}"
-        full_answer = full_answer.strip()
-        logger.debug(f"Generated Answer: {full_answer}, Reasoning: {reasoning}")
-        return full_answer
+            instance_id, _ = await self.generator_agent.create()
+            response, _, _ = await self.generator_agent.execute(instance_id, agent_input)
+            await self.generator_agent.release(instance_id)
+            response: Optional[List[finalize.FinalizeOutput]] = response.get('output', None)
+            logger.info(f"Final answer generation output: {response}")
+            if not response:
+                logger.warning(f"No final answer output from generator for question: {question}")
+                return None
+            response: finalize.FinalizeOutput = response[0]
+            answer = response.answer.strip() if response.answer else ""
+            detailed_answer = response.detailed_answer.strip() if response.detailed_answer else ""
+            reasoning = response.reasoning.strip() if response.reasoning else ""
+            if not reasoning or not reasoning.strip():
+                reasoning = reasoning_trace
+            if not answer and not detailed_answer:
+                answer = detailed_answer = reasoning
+            elif not answer and detailed_answer:
+                answer = detailed_answer
+            elif not detailed_answer and answer:
+                detailed_answer = answer
+            return detailed_answer
+        else:
+            reflection_str = format_memory(memory_data) if memory_data else ""
+            exploration_str = format_memory(explored_data) if explored_data else ""
+            reasoning_trace = format_reasoning_trace(reasoning_trace)
+            important_info = format_context(memory=reflection_str, reasoning_trace=reasoning_trace, explored_data=exploration_str)
+            logger.info(f"Generating subQA for rephrased question: {question}")
+            logger.info(f"Important info for subQA:\n{important_info}")
+            instance_id, _ = await self.generator_agent.create()
+            agent_input = {
+                'generate_fn': 'generate_answer',
+                'question_list': question,
+                'context_list': important_info,
+                'run_kwargs': agent_kwargs,
+            }
+            response, _, _ = await self.generator_agent.execute(instance_id, agent_input)
+            await self.generator_agent.release(instance_id)
+            response: Optional[List[decompose_and_answer.AnswerOutput]] = response.get('output', None)
+            logger.info(f"SubQA generation output: {response}")
+            if not response:
+                logger.warning(f"No subQA output from generator for rephrased question: {question}")
+                return None
+            response: decompose_and_answer.AnswerOutput = response[0]
+            sub_answer = response.answer.strip() if response.answer else ""
+            reasoning = response.reasoning.strip() if response.reasoning else ""
+            if not sub_answer and reasoning:
+                sub_answer = reasoning
+            elif not reasoning and sub_answer:
+                reasoning = sub_answer
+            return sub_answer
        
     async def _evaluate_final_answer(self, question: str, predicted_answer: str, correct_answer: str, agent_kwargs: dict[str, Any]):
-        instance_id = None
-        try:
-            kwargs = agent_kwargs or {}
-            instance_id, _ = await self.evaluator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            parameters = {
-                'evaluate_fn': 'evaluate_final_answer',
-                'question': question,
-                'correct_answer': correct_answer,
-                'predicted_answer': predicted_answer,
-            }
-            evaluation_result, _, _ = await self.evaluator_agent.execute(
-                instance_id=instance_id,
-                parameters=parameters,
-            )
-            assert isinstance(evaluation_result, list), f"evaluation_result is not a list: {evaluation_result}"
-            evaluation_result = evaluation_result[0]
-            assert isinstance(evaluation_result, (int, float)), f"evaluation_result is not a number: {evaluation_result}"
-            reward = float(evaluation_result)
-        except Exception as e:
-            logger.warning(f"Error when executing tool: {e}")
-            reward = 0.
-        finally:
-            if instance_id:
-                await self.evaluator_agent.release(instance_id=instance_id)
+        kwargs = agent_kwargs or {}
+        instance_id, _ = await self.evaluator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
+        parameters = {
+            'evaluate_fn': 'evaluate_final_answer',
+            'question': question,
+            'correct_answer': correct_answer,
+            'predicted_answer': predicted_answer,
+        }
+        evaluation_result, _, _ = await self.evaluator_agent.execute(
+            instance_id=instance_id,
+            parameters=parameters,
+        )
+        await self.evaluator_agent.release(instance_id)
+        assert isinstance(evaluation_result, list), f"evaluation_result is not a list: {evaluation_result}"
+        evaluation_result = evaluation_result[0]
+        assert isinstance(evaluation_result, (int, float)), f"evaluation_result is not a number: {evaluation_result}"
+        reward = float(evaluation_result)
         logger.debug(f"Final Answer Evaluation Reward: {reward}")
         return reward
 
     async def _judge_answer(self, question: str, answer: str, agent_kwargs: dict[str, Any]):
-        instance_id = None
-        try:
-            kwargs = agent_kwargs or {}
-            instance_id, _ = await self.evaluator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            parameters = {
-                'evaluate_fn': 'judge_answer',
-                'user_question': question,
-                'system_answer': answer,
-            }
-            evaluation_result, _, _ = await self.evaluator_agent.execute(
-                instance_id=instance_id,
-                parameters=parameters,
-            )
-            assert isinstance(evaluation_result, list), f"evaluation_result is not a list: {evaluation_result}"
-            evaluation_result = evaluation_result[0]
-            assert isinstance(evaluation_result, (int, float)), f"evaluation_result is not a number: {evaluation_result}"
-            reward = float(evaluation_result)
-        except Exception as e:
-            logger.warning(f"Error when executing tool: {e}")
-            reward = 0.
-        finally:
-            if instance_id:
-                await self.evaluator_agent.release(instance_id=instance_id)
-        logger.debug(f"Judge Reward: {reward}")
+        kwargs = agent_kwargs or {}
+        instance_id, _ = await self.evaluator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
+        parameters = {
+            'evaluate_fn': 'judge_answer',
+            'user_question': question,
+            'system_answer': answer,
+        }
+        evaluation_result, _, _ = await self.evaluator_agent.execute(
+            instance_id=instance_id,
+            parameters=parameters,
+        )
+        await self.evaluator_agent.release(instance_id)
+        assert isinstance(evaluation_result, list), f"evaluation_result is not a list: {evaluation_result}"
+        evaluation_result = evaluation_result[0]
+        assert isinstance(evaluation_result, (int, float)), f"evaluation_result is not a number: {evaluation_result}"
+        reward = float(evaluation_result)
+        logger.debug(f"QA Pair Evaluation Reward: {reward}")
         return reward
 
     async def _evaluate_path(self, reasoning_trace: list[str], question: str, correct_answer: str, agent_kwargs: dict[str, Any]):
-        instance_id = None
         reasoning_trace = format_reasoning_trace(reasoning_trace)
-        try:
-            kwargs = agent_kwargs or {}
-            instance_id, _ = await self.evaluator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            parameters = {
-                'evaluate_fn': 'evaluate_path',
-                'main_question': question,
-                'ground_truth_answer': correct_answer,
-                'reasoning_path': reasoning_trace,
-            }
-            evaluation_result, _, _ = await self.evaluator_agent.execute(
-                instance_id=instance_id,
-                parameters=parameters,
-            )
-            assert isinstance(evaluation_result, list), f"evaluation_result is not a list: {evaluation_result}"
-            evaluation_result = evaluation_result[0]
-            assert isinstance(evaluation_result, (int, float)), f"evaluation_result is not a number: {evaluation_result}"
-            reward = float(evaluation_result)
-        except Exception as e:
-            logger.warning(f"Error when executing tool: {e}")
-            reward = 0.
-        finally:
-            if instance_id:
-                await self.evaluator_agent.release(instance_id=instance_id)
+        kwargs = agent_kwargs or {}
+        instance_id, _ = await self.evaluator_agent.create(create_kwargs=kwargs.get("create_kwargs", {}))
+        parameters = {
+            'evaluate_fn': 'evaluate_path',
+            'main_question': question,
+            'ground_truth_answer': correct_answer,
+            'reasoning_path': reasoning_trace,
+        }
+        evaluation_result, _, _ = await self.evaluator_agent.execute(
+            instance_id=instance_id,
+            parameters=parameters,
+        )
+        await self.evaluator_agent.release(instance_id)
+        assert isinstance(evaluation_result, list), f"evaluation_result is not a list: {evaluation_result}"
+        evaluation_result = evaluation_result[0]
+        assert isinstance(evaluation_result, (int, float)), f"evaluation_result is not a number: {evaluation_result}"
+        reward = float(evaluation_result)
         logger.debug(f"Path Evaluation Reward: {reward}")
         return reward

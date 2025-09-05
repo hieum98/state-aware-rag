@@ -176,14 +176,11 @@ class ReasoningNode(NodeMixin):
     def print_node(self):
         print(self)
 
-    def generate_children(self):
-        async def task_execute(tasks):
-            results = await asyncio.gather(*[task() for task in tasks])
+    async def generate_children(self):
+        def read_results(results):
             children: List['ReasoningNode'] = []
             all_explored_info: List[str] = []
             for res in results:
-                if res is None:
-                    continue
                 nodes, explored_info = res
                 if nodes:
                     children.extend(nodes)
@@ -192,29 +189,32 @@ class ReasoningNode(NodeMixin):
             return children, all_explored_info
         
         if self.depth >= self.max_depth:
-            final_nodes, explored_info = asyncio.run(self.generate_final_answer_node())
+            final_nodes, explored_info = await self.generate_final_answer_node()
             children = final_nodes if final_nodes else []
             all_explored_info = explored_info if explored_info else []
         elif self.node_type == NodeType.USER_QUESTION:
-            tasks = [self.generate_subQA_node]
+            tasks = [self.generate_subQA_node()]
             if not self.is_cot:
-                tasks.extend([self.generate_rephrase_question_node, self.generate_final_answer_node])
-            children, all_explored_info = asyncio.run(task_execute(tasks))
+                tasks.extend([self.generate_rephrase_question_node(), self.generate_final_answer_node()])
+            results = await asyncio.gather(*tasks)
+            children, all_explored_info = read_results(results)
         elif self.node_type == NodeType.SUB_QA_NODE:
-            tasks = [self.generate_subQA_node]
+            tasks = [self.generate_subQA_node()]
             if not self.is_cot:
-                tasks.extend([self.generate_self_corrected_node, self.generate_synthesis_node,
-                              self.generate_rephrase_question_node, self.generate_subQA_node])
-            children, all_explored_info = asyncio.run(task_execute(tasks))
+                tasks.extend([self.generate_self_corrected_node(), self.generate_synthesis_node(),
+                              self.generate_rephrase_question_node()])
+            results = await asyncio.gather(*tasks)
+            children, all_explored_info = read_results(results)
         elif self.node_type == NodeType.REPHASED_QUESTION_NODE:
-            sub_qa_nodes, explored_info = asyncio.run(self.generate_subQA_node())
+            sub_qa_nodes, explored_info = await self.generate_subQA_node()
             children = sub_qa_nodes if sub_qa_nodes else []
             all_explored_info = explored_info if explored_info else []
         elif self.node_type == NodeType.SELF_CORRECTED_NODE:
-            tasks = [self.generate_synthesis_node, self.generate_subQA_node]
-            children, all_explored_info = asyncio.run(task_execute(tasks))
+            tasks = [self.generate_synthesis_node(), self.generate_subQA_node()]
+            results = await asyncio.gather(*tasks)
+            children, all_explored_info = read_results(results)
         elif self.node_type == NodeType.SYNTHESIS_NODE:
-            sub_qa_nodes, explored_info = asyncio.run(self.generate_subQA_node())
+            sub_qa_nodes, explored_info = await self.generate_subQA_node()
             children = sub_qa_nodes if sub_qa_nodes else []
             all_explored_info = explored_info if explored_info else []
         else:
@@ -224,7 +224,7 @@ class ReasoningNode(NodeMixin):
         new_memory: Optional[List[str]] = None
         if all_explored_info:
             all_explored_info = list(set(all_explored_info))
-            new_memory = asyncio.run(self.update_memory(explored_data=all_explored_info))
+            new_memory = await self.update_memory(explored_data=all_explored_info)
             new_memory = list(set(new_memory)) if new_memory else None
             new_memory = [x.strip() for x in new_memory if x and x.strip()] if new_memory else None
             new_memory = sorted(new_memory) if new_memory else None
@@ -235,7 +235,8 @@ class ReasoningNode(NodeMixin):
     def find_children(self, rollout_id: str=None):
         if self.children:
             return self.children
-        children = self.generate_children()
+        # generate_children is async; run it in a fresh event loop for sync callers
+        children = asyncio.run(self.generate_children())
         for child in children:
             child.set_rollout_id(rollout_id)
         return children
@@ -309,22 +310,22 @@ class ReasoningNode(NodeMixin):
         if isinstance(retrieval_docs, list) and all(isinstance(x, list) for x in retrieval_docs):
             retrieval_docs = sum(retrieval_docs, [])
             retrieval_docs = list(set(retrieval_docs))  # Deduplicate documents
-        logger.info(f"Retrieved {len(retrieval_docs)} documents for queries: {queries}")
         if not retrieval_docs:
             logger.warning(f"No documents retrieved for queries: {queries}")
             return None
+        logger.info(f"Retrieved {len(retrieval_docs)} documents for queries: {queries}")
         
         # Filter and consolidate
-        meta_info = {
-                'user_question': self.node_config.get("user_question", ""),
-                'question_id': self.node_config.get("question_id", ""),
-                'depth': self.depth,
-                'question': question
-            }
+        base_meta_info = {
+            'user_question': self.node_config.get("user_question", ""),
+            'question_id': self.node_config.get("question_id", ""),
+            'depth': self.depth,
+            'question': question,
+        }
         tasks = []
         all_instance_ids = []
         for doc in retrieval_docs:
-            meta_info['document'] = doc
+            meta_info = {**base_meta_info, 'document': doc}
             agent_input = {
                 'question': question,
                 'document': doc,
@@ -550,9 +551,9 @@ class ReasoningNode(NodeMixin):
             logger.warning(f"Empty rephrased question for subQA generation at depth {self.depth}")
             return None, None
         reflection = await self.reflect(sub_question)
-        exloration = await self.explore(sub_question)
+        exploration = await self.explore(sub_question)
         reflection_str = format_memory(reflection) if reflection else ""
-        exploration_str = format_memory(exloration) if exloration else ""
+        exploration_str = format_memory(exploration) if exploration else ""
         important_info = format_context(memory=reflection_str, reasoning_trace=reasoning_trace, explored_data=exploration_str)
         logger.info(f"Generating subanswer for  question: {sub_question} at depth {self.depth}")
         logger.info(f"Important info for subQA:\n{important_info}")
@@ -568,7 +569,8 @@ class ReasoningNode(NodeMixin):
         logger.info(f"SubQA generation output: {response}")
         if not response:
             logger.warning(f"No subQA output from generator for rephrased question: {sub_question} at depth {self.depth}")
-            return None, exploration_str
+            # Return raw exploration list so callers can extend safely
+            return None, exploration
         nodes: List['ReasoningNode'] = []
         all_answers = []
         for item in response:
@@ -597,7 +599,7 @@ class ReasoningNode(NodeMixin):
                 **self.node_config
             )
             nodes.append(node)
-        return nodes, exloration
+        return nodes, exploration
 
     async def generate_subQA_node(self):
         user_question = self.node_config.get("user_question", "")

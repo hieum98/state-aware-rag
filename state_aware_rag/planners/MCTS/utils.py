@@ -281,7 +281,7 @@ def search(
             raise ValueError("golden_answer must be a string or a list of strings.")
         
     save_path = f"{save_dir}/mcts_tree_{question_id}.jsonl" if save_tree else None
-    if os.path.exists(save_path) and save_tree:
+    if save_path and os.path.exists(save_path) and save_tree:
         # If the file already exists, load the tree from the file
         logger.info(f"Loading existing MCTS tree from {save_path}")
         root_node = get_tree_from_file(

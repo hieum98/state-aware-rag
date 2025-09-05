@@ -43,7 +43,7 @@ def test_user_question_node():
         top_k=node_config.get("top_k", 3),
     )
 
-    children = node.generate_children()
+    children = asyncio.run(node.generate_children())
     for child in children:
         print("Child Node:")
         print(child)
@@ -87,7 +87,7 @@ def test_sub_qa_node():
         top_k=node_config.get("top_k", 3),
     )
 
-    children = node.generate_children()
+    children = asyncio.run(node.generate_children())
     for child in children:
         print("Child Node:")
         print(child)

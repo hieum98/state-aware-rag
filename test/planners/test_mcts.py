@@ -15,6 +15,11 @@ def test_mcts():
     evaluator_config = omegaconf.OmegaConf.to_container(evaluator_config, resolve=True)
     search_config = omegaconf.OmegaConf.load("configs/mcts.yaml")
 
+    print("Generator Config:", generator_config)
+    print("Retriever Config:", retriever_config)
+    print("Extractor Config:", extractor_config)
+    print("Evaluator Config:", evaluator_config)
+    print("Search Config:", search_config)
     generator = GeneratorAgent(config=generator_config)
     retriever = RetrievalAgent(config=retriever_config)
     extractor = ExtractorAgent(config=extractor_config)
@@ -26,15 +31,15 @@ def test_mcts():
         extractor=extractor,
         retriever=retriever,
         # Question components
-        user_question="Which magazine was started first Arthur's Magazine or First for Women?",
-        question_id="test_001",
-        golden_answer="Arthur's Magazine",
+        user_question="where was the director of film breakup buddies born?",
+        question_id="test_002",
+        golden_answer="Taiyuan, Shanxi, China",
         # MCTS parameters
-        max_depth=5, # search_config.max_depth,
+        max_depth=3, # search_config.max_depth,
         num_rollouts=3, # search_config.num_rollouts
         exploration_weight=search_config.exploration_weight,
         use_golden_answer=search_config.use_golden_answer,
-        save_tree=search_config.save_tree,
+        save_tree=False, # search_config.save_tree,
         save_dir=search_config.tree_dir,
         top_k=search_config.top_k,
         verbose=True,

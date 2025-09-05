@@ -177,7 +177,7 @@ def search(
         **kwargs
 ):
     save_path = f"{save_dir}/cot_tree_{question_id}.jsonl"
-    if os.path.exists(save_path):
+    if save_tree and os.path.exists(save_path):
         root_node = get_tree_from_file(
             save_path=save_path,
             generator=generator,

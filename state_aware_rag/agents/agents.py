@@ -327,9 +327,7 @@ class GeneratorAgent(BaseAgent):
         })
         # Allow top-level kwargs to override
         inputs_kwargs.update(kwargs)
-        
         try:
-            logger.debug(f"[GeneratorAgent] Running generation with inputs: {inputs_kwargs}")
             generate_method = getattr(agent, generate_fn)
             response = generate_method(**inputs_kwargs) # List of BaseModel as output
         except Exception as e:

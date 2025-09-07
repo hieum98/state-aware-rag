@@ -55,13 +55,13 @@ def test_state_aware_loop(ray_cluster, base_config):
     agent_loop_manager = init_agent_loop_manager(base_config)
     raw_prompts = [
         "Which magazine was started first 'First for Women' or 'Arthur's Magazine'?",
-        # "Who wrote the play 'Romeo and Juliet'?",
-        # "Who is the creator of The Neverwhere?"
+        "Who wrote the play 'Romeo and Juliet'?",
+        "In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?"
         ]
     correct_answers = [
         "'Arthur's Magazine'",
-        # "The play 'Romeo and Juliet' was written by William Shakespeare.",
-        # "The creator of 'Neverwhere' is Neil Gaiman."
+        "The play 'Romeo and Juliet' was written by William Shakespeare.",
+        "Alexis Sanchez"
     ]
     # Create a batch of prompts
     batch = DataProto(

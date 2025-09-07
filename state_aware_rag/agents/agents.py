@@ -527,9 +527,6 @@ class EvaluatorAgent(BaseAgent):
                 correct_answer = parameters.get("golen_answer", None)
             if isinstance(correct_answer, str):
                 correct_answer = [correct_answer]
-            if correct_answer:
-                assert len(correct_answer) == len(user_question), "'correct_answer' must be a list of the same length as 'user_question' if provided."
-            
             inputs_kwargs = parameters.get("run_kwargs", {}).copy()
             inputs_kwargs.update({
                 "user_question": user_question,

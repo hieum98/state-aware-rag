@@ -15,11 +15,6 @@ def test_mcts():
     evaluator_config = omegaconf.OmegaConf.to_container(evaluator_config, resolve=True)
     search_config = omegaconf.OmegaConf.load("configs/mcts.yaml")
 
-    print("Generator Config:", generator_config)
-    print("Retriever Config:", retriever_config)
-    print("Extractor Config:", extractor_config)
-    print("Evaluator Config:", evaluator_config)
-    print("Search Config:", search_config)
     generator = GeneratorAgent(config=generator_config)
     retriever = RetrievalAgent(config=retriever_config)
     extractor = ExtractorAgent(config=extractor_config)
@@ -31,9 +26,9 @@ def test_mcts():
         extractor=extractor,
         retriever=retriever,
         # Question components
-        user_question="where was the director of film breakup buddies born?",
-        question_id="test_002",
-        golden_answer="Taiyuan, Shanxi, China",
+        user_question="In 2018, what Chilean footballer left Arsenal to join the team that The Saints beat in 1976 to win the FA Cup?",
+        question_id="test_003",
+        golden_answer="Alexis Sanchez",
         # MCTS parameters
         max_depth=3, # search_config.max_depth,
         num_rollouts=3, # search_config.num_rollouts

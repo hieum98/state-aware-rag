@@ -9,25 +9,11 @@ from typing import Any, List, Optional
 from uuid import uuid4
 from omegaconf import OmegaConf
 from transformers import AutoConfig
-try:
-    # Hydra may change the working directory; use its helpers if available
-    from hydra.utils import get_original_cwd, to_absolute_path  # type: ignore
-except Exception:  # pragma: no cover - hydra might not be present in some contexts
-    get_original_cwd = None
-    to_absolute_path = None
 from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutput, AgentLoopMetrics, register
 from verl.utils.profiler import simple_timer
 from vllm.reasoning.deepseek_r1_reasoning_parser import DeepSeekR1ReasoningParser
 
-from state_aware_rag.agents.prompts import (
-    decompose_and_answer,
-    evaluate,
-    extract,
-    finalize,
-    rephase_question,
-    self_correct,
-    synthesize
-    )
+from state_aware_rag.agents.prompts import decompose_and_answer, extract, finalize
 from state_aware_rag.agents.agents import GeneratorAgent, RetrievalAgent, EvaluatorAgent
 from state_aware_rag.agents.utils import format_reasoning_trace, format_memory, format_context, format_extractor_messages, extract_info_from_text, format_reflection_context
 
@@ -59,6 +45,7 @@ class StageAwareLoop(AgentLoopBase):
 
         retrieval_config = OmegaConf.load(retrieval_config_path)
         retrieval_config = OmegaConf.to_container(retrieval_config, resolve=True)
+        retrieval_config['retrieval_config']['top_k'] = 1 # only retrieve one document for training, TODO: make it configurable
         cls.retriever_agent = RetrievalAgent(retrieval_config)
 
         generator_config = OmegaConf.load(generator_config_path)
@@ -103,10 +90,8 @@ class StageAwareLoop(AgentLoopBase):
         memory_data: list[str] = []
         reasoning_traces: list[str] = []
         final_answer = None
-
         # Metrics
         metrics_model = AgentLoopMetrics()
-
         # Accumulate multiple training examples per input
         all_train_data = []
 
@@ -181,6 +166,8 @@ class StageAwareLoop(AgentLoopBase):
                 agent_kwargs=generator_kwargs,
             )
             if sub_answer is None or not sub_answer.strip():
+                logger.warning(f"Subanswer generation returned empty answer at iteration {i}. Ending loop.")
+                all_train_data.append(train_data)
                 final_answer = format_memory(reasoning_traces) if reasoning_traces else None
                 break
 
@@ -196,6 +183,7 @@ class StageAwareLoop(AgentLoopBase):
             if reasoning_step not in reasoning_traces:
                 reasoning_traces.append(reasoning_step)
             else:
+                logger.warning(f"Detected repeated reasoning step at iteration {i}. Ending loop to prevent cycles.")
                 all_train_data.append(train_data)
                 final_answer = format_memory(reasoning_traces) if reasoning_traces else None
                 break
@@ -230,23 +218,18 @@ class StageAwareLoop(AgentLoopBase):
             )
             is_outcome_aware = True
         
-        qa_pairs = []
-        train_data = []
-        i = 0
-        print(f"Total training steps collected: {len(all_train_data)}")
-        print(f"All training data: {json.dumps(all_train_data, indent=2)}")
-        for data in all_train_data:
-            if "sub_question" in data and "sub_answer" in data:
-                # Only keep the training data which has valid sub_question and sub_answer
-                if data["sub_question"] and data["sub_answer"]:
-                    qa_pairs.append((data["sub_question"], data["sub_answer"], i))
-                    reward_tasks.append(self._judge_answer(data["sub_question"], data["sub_answer"], evaluator_kwargs))
-                    train_data.append(data) 
-                    i = i + 1
+        logger.debug(f"Total training steps collected: {len(all_train_data)}")
+        for i, data in enumerate(all_train_data):
+            assert "sub_question" in data, f"Training data at step {i} missing 'sub_question'."
+            if "sub_answer" in data:
+                reward_tasks.append(
+                    self._judge_answer(data["sub_question"], data["sub_answer"], evaluator_kwargs)
+                )
             else:
-                # Keep the memory update and reflection data
-                train_data.append(data)
-                i = i + 1
+                assert data['sub_question'] == question, "If no sub_answer, sub_question must equal original question."
+                reward_tasks.append(
+                    self._judge_answer(data["sub_question"], final_answer if final_answer else "", evaluator_kwargs)
+                )
         if reasoning_traces:
             reward_tasks.append(
                 self._evaluate_path(reasoning_traces, question, correct_answer, evaluator_kwargs)
@@ -263,11 +246,14 @@ class StageAwareLoop(AgentLoopBase):
         rewards = rewards[1:] if is_outcome_aware else rewards
         whole_path_reward = rewards[-1] if reasoning_traces else None
         rewards = rewards[:-1] if reasoning_traces else rewards
-        assert len(rewards) == len(qa_pairs), f"Number of rewards {len(rewards)} does not match number of QA pairs {len(qa_pairs)}"
-        for (q, a, idx), r in zip(qa_pairs, rewards, strict=True):
-            train_data[idx]['step_reward'] = r
-        avg_step_reward = sum(rewards) / len(rewards) if rewards else None
-        for data in train_data:
+        assert len(rewards) == len(all_train_data), (
+            f"Number of rewards {len(rewards)} does not match number of training steps {len(all_train_data)}"
+        )
+        for idx, r in enumerate(rewards):
+            all_train_data[idx]['step_reward'] = r
+
+        avg_step_reward = sum(rewards) / len(rewards) 
+        for data in all_train_data:
             if "explore_input_ids_list" in data and "explore_output_list" in data:
                 qa_pair = f"{example_id}-{data['sub_question']}-explore"
                 _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
@@ -332,8 +318,8 @@ class StageAwareLoop(AgentLoopBase):
         all_response_ids = [ids[: self.response_length] for ids in all_response_ids]
         all_response_masks = [mask[: self.response_length] for mask in all_response_masks]
         all_response_logprobs = [logprobs[: self.response_length] if logprobs else None for logprobs in all_response_logprobs]
-        logger.info(f"Generated {len(all_prompt_ids)} training examples for question: {question}")
-        logger.info(f"Rewards: {reward}")
+        logger.debug(f"Generated {len(all_prompt_ids)} training examples for question: {question}")
+        logger.debug(f"Rewards: {reward}")
         outputs: list[AgentLoopOutput] = []
         for i in range(len(all_prompt_ids)):
             reward_score = reward[i] 
@@ -351,22 +337,15 @@ class StageAwareLoop(AgentLoopBase):
                     extra_fields={'uid': example_id, '_id': _id}
                 )
             )
-        if len(outputs) % 8 != 0:
-            # Add duplicates to make the batch size a multiple of 8
-            n_to_add = 8 - (len(outputs) % 8)
-            outputs.extend([copy.deepcopy(outputs[-1]) for _ in range(n_to_add)]) # add duplicates of the last element, i.e., the memory update
         return outputs
         
     def parse_extractor_outputs(self, text: str):
         reasoning_txt, output_txt = self.reasoning_parser.extract_reasoning_content(text, None)
-        # logger.debug(f"Extractor Reasoning Text: {reasoning_txt}")
-        logger.debug(f"Extractor Output Text: {output_txt}")
         if output_txt:
             try:
                 extractor_output = extract.ExtractOutput.model_validate_json(output_txt)
                 is_valid = True
             except Exception as e:
-                # logger.warning(f"Failed to decode extractor output: {e}")
                 is_valid = False
                 keys = extract.ExtractOutput.model_fields.keys()
                 value_types = [field.annotation.__name__ for field in extract.ExtractOutput.model_fields.values()]
@@ -385,9 +364,8 @@ class StageAwareLoop(AgentLoopBase):
                     reasoning=""
                 )
         else:
+            logger.warning(f"Extractor output parsing failed for text: {text}, returning empty extraction.")
             return extract.ExtractOutput(information=[], decision="not_relevant", reasoning=""), False
-        logger.debug(f"Extractor Output Valid: {is_valid}")
-        logger.debug(f"Extractor Output: {extractor_output}")
         return extractor_output, is_valid
     
     async def _extract(
@@ -401,7 +379,6 @@ class StageAwareLoop(AgentLoopBase):
             )
         extractor_prompt_ids_list = []
         for messages in extractor_messages:
-            # logger.debug(f"Extractor messages: {messages}")
             input_ids = self.tokenizer.apply_chat_template(
                     messages, add_generation_prompt=True, tokenize=True, **self.apply_chat_template_kwargs
                 )
@@ -415,8 +392,6 @@ class StageAwareLoop(AgentLoopBase):
                 )
             )
         consolidate_outputs = await asyncio.gather(*consolidate_tasks)
-        logger.debug(f"Extractor generated outputs for {len(consolidate_outputs)} documents.")
-        logger.debug(f"Number of prompt ID sets: {len(extractor_prompt_ids_list)}")
         assert len(consolidate_outputs) == len(extractor_prompt_ids_list), "Mismatch between outputs and prompt ID sets"
         return consolidate_outputs, extractor_prompt_ids_list
 
@@ -432,6 +407,7 @@ class StageAwareLoop(AgentLoopBase):
         if retrieval_docs:
             retrieval_docs = retrieval_docs[0] # List of documents for the single query
         if not isinstance(retrieval_docs, list):
+            logger.warning(f"Retrieval returned invalid documents for query: {query}")
             retrieval_docs = []
         logger.debug(f"Retrieved {len(retrieval_docs)} documents for query: {query}")
         return retrieval_docs
@@ -447,8 +423,8 @@ class StageAwareLoop(AgentLoopBase):
         memory_str = format_memory(memory_data) if memory_data else ""
         reasoning_trace = format_reasoning_trace(reasoning_trace)
         context = format_context(memory=memory_str, reasoning_trace=reasoning_trace)
-        logger.info(f"Decomposing question: {user_question}")
-        logger.info(f"Context for decomposition:\n{context}")
+        logger.debug(f"Decomposing question: {user_question}")
+        logger.debug(f"Context for decomposition:\n{context}")
         agent_input = {
             'generate_fn': 'generate_subquestion',
             'question_list': user_question,
@@ -462,7 +438,7 @@ class StageAwareLoop(AgentLoopBase):
         if not response:
             logger.warning(f"No subquestion output from generator for question: {user_question}")
             return {"answerable_main_question": True, "subquestion": user_question}
-        logger.info(f"Decomposition output: {response}")
+        logger.debug(f"Decomposition output: {response}")
         response: decompose_and_answer.SubquestionOutput = response[0]
         answerable_main_question = response.answerable_main_question
         sub_question = response.subquestion.strip()
@@ -486,8 +462,8 @@ class StageAwareLoop(AgentLoopBase):
             explored_str = format_memory(explored_data) if explored_data else ""
             reasoning_trace = format_reasoning_trace(reasoning_trace)
             context = format_context(memory=memory_str, reasoning_trace=reasoning_trace, explored_data=explored_str)
-            logger.info(f"Generating final answer for question: {question}")
-            logger.info(f"Context for final answer:\n{context}")
+            logger.debug(f"Generating final answer for question: {question}")
+            logger.debug(f"Context for final answer:\n{context}")
             if not question or not question.strip():
                 logger.warning(f"Empty user question for final answer generation")
                 return None
@@ -502,7 +478,7 @@ class StageAwareLoop(AgentLoopBase):
             response, _, _ = await self.generator_agent.execute(instance_id, agent_input)
             await self.generator_agent.release(instance_id)
             response: Optional[List[finalize.FinalizeOutput]] = response.get('output', None)
-            logger.info(f"Final answer generation output: {response}")
+            logger.debug(f"Final answer generation output: {response}")
             if not response:
                 logger.warning(f"No final answer output from generator for question: {question}")
                 return None
@@ -522,10 +498,9 @@ class StageAwareLoop(AgentLoopBase):
         else:
             reflection_str = format_memory(memory_data) if memory_data else ""
             exploration_str = format_memory(explored_data) if explored_data else ""
-            reasoning_trace = format_reasoning_trace(reasoning_trace)
-            important_info = format_context(memory=reflection_str, reasoning_trace=reasoning_trace, explored_data=exploration_str)
-            logger.info(f"Generating subQA for rephrased question: {question}")
-            logger.info(f"Important info for subQA:\n{important_info}")
+            important_info = format_context(memory=reflection_str, reasoning_trace=None, explored_data=exploration_str)
+            logger.debug(f"Generating subQA for rephrased question: {question}")
+            logger.debug(f"Important info for subQA:\n{important_info}")
             instance_id, _ = await self.generator_agent.create()
             agent_input = {
                 'generate_fn': 'generate_answer',
@@ -536,7 +511,7 @@ class StageAwareLoop(AgentLoopBase):
             response, _, _ = await self.generator_agent.execute(instance_id, agent_input)
             await self.generator_agent.release(instance_id)
             response: Optional[List[decompose_and_answer.AnswerOutput]] = response.get('output', None)
-            logger.info(f"SubQA generation output: {response}")
+            logger.debug(f"SubQA generation output: {response}")
             if not response:
                 logger.warning(f"No subQA output from generator for rephrased question: {question}")
                 return None

@@ -32,7 +32,7 @@ def test_mcts():
         # CoT parameters
         max_depth=5,
         num_rollouts=2,
-        save_tree=search_config.save_tree,
+        save_tree=False, # search_config.save_tree,
         save_dir=search_config.tree_dir,
         top_k=search_config.top_k,
         verbose=True,

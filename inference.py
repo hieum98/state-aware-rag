@@ -268,7 +268,7 @@ def main(cfg: DictConfig):
 
     # Initialize Ray once in the driver; avoid initializing inside worker subprocesses
     if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True, log_to_driver=True, include_dashboard=False, num_cpus=os.cpu_count() or 1)
+        ray.init(ignore_reinit_error=True, log_to_driver=True, include_dashboard=False)
 
     mode = cfg.mode  # "mcts" or "cot"
     # Build output dirs (resolve relative to original cwd)

@@ -45,7 +45,7 @@ class StageAwareLoop(AgentLoopBase):
 
         retrieval_config = OmegaConf.load(retrieval_config_path)
         retrieval_config = OmegaConf.to_container(retrieval_config, resolve=True)
-        retrieval_config['retrieval_config']['top_k'] = 1 # only retrieve one document for training, TODO: make it configurable
+        retrieval_config['top_k'] = 1 # only retrieve one document for training, TODO: make it configurable
         cls.retriever_agent = RetrievalAgent(retrieval_config)
 
         generator_config = OmegaConf.load(generator_config_path)

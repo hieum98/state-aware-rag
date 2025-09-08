@@ -58,11 +58,12 @@ class StageAwareLoop(AgentLoopBase):
             cls.reasoning_parser = DeepSeekR1ReasoningParser(tokenizer=tokenizer)
 
         retrieval_config = OmegaConf.load(retrieval_config_path)
+        retrieval_config.top_k = 1 # only retrieve one for training
         retrieval_config = OmegaConf.to_container(retrieval_config, resolve=True)
         cls.retriever_agent = RetrievalAgent(retrieval_config)
 
         generator_config = OmegaConf.load(generator_config_path)
-        generator_config.generation_config.n = 1  # only generate one for training, TODO: make it configurable
+        generator_config.generation_config.n = 1  # only generate one for training
         generator_config = OmegaConf.to_container(generator_config, resolve=True)
         cls.generator_agent = GeneratorAgent(generator_config)
 
@@ -90,9 +91,15 @@ class StageAwareLoop(AgentLoopBase):
         assert question is not None and isinstance(question, str) and question.strip(), (
             "StageAwareLoop requires a 'question' string in dataset row, or a 'raw_prompt' containing user message."
         )
-
         correct_answer = kwargs.get("correct_answer", None)
+        # assert correct_answer is not None, "correct_answer must be provided in kwargs for reward computation."
+        # Deterministically sample based on example_id
+        _seed = int.from_bytes(sha256(str(example_id).encode("utf-8")).digest(), "big")
+        _types = ['exploration', 'reflection', 'memory_update']
+        extractor_type = _types[_seed % len(_types)]
+        iteration = _seed % self.max_iterations  
         logger.debug(f"Starting StageAwareLoop for question: {question} with correct_answer: {correct_answer}")
+        logger.debug(f"Generating training data using extractor type: {extractor_type} at iteration {iteration}")
         assert correct_answer is not None, "correct_answer must be provided in kwargs for reward computation."
 
         agent_kwargs = kwargs.get("agent_kwargs", {})
@@ -107,8 +114,15 @@ class StageAwareLoop(AgentLoopBase):
         # Metrics
         metrics_model = AgentLoopMetrics()
 
-        # Accumulate multiple training examples per input
-        all_train_data = []
+        # Training example
+        prompt_ids = []
+        output = None
+        structure_reward = 0.
+        to_eval_subquestion = ""
+        to_eval_subanswer = ""
+        step_reward = 0.
+        outcome_reward = 0.
+        reasoning_reward = 0.
 
         for i in range(self.max_iterations):
             # Step 1: Subquestion generation
@@ -121,42 +135,39 @@ class StageAwareLoop(AgentLoopBase):
                 logger.warning(f"Subquestion generation returned empty subquestion at iteration {i}. Ending loop.")
                 sub_question = question
                 answerable = True
+                iteration = i  # Current iteration
 
             # Step 2: Retrieval
             retrieval_docs = await self._retrieve(sub_question, retrieval_kwargs)
+            skip_extraction = False
             if not retrieval_docs:
-                logger.warning(f"Retrieval returned no documents for question: {sub_question}")
-                final_answer = format_memory(reasoning_traces) if reasoning_traces else None
-                break
-
-            # Step 3: Information consolidation
-            all_extractions: list[str] = []
-            is_valid: list[bool] = []
-            outputs = []
-            prompt_ids = []
-            consolidate_outputs, extractor_prompt_ids_list = await self._extract(
-                sub_question, retrieval_docs, sampling_params
-            )
-            for output, extractor_prompt_ids in zip(consolidate_outputs, extractor_prompt_ids_list, strict=True):
-                consolidate_txt = self.tokenizer.decode(output.token_ids, skip_special_tokens=True)
+                logger.warning(f"No documents retrieved for subquestion: {sub_question}")
+                extractor_type = 'memory_update'  # Force to use memory update as training signal
+                skip_extraction = True
+            
+            extraction_info = []
+            if not skip_extraction:
+                # Step 3: Information consolidation
+                consolidate_output, extractor_prompt_ids = await self._extract(
+                    sub_question, retrieval_docs, sampling_params
+                )
+                consolidate_output = consolidate_output[0]
+                extractor_prompt_ids = extractor_prompt_ids[0]
+                consolidate_txt = self.tokenizer.decode(consolidate_output.token_ids, skip_special_tokens=True)
                 consolidate_entry, _is_valid = self.parse_extractor_outputs(consolidate_txt)
-                prompt_ids.append(extractor_prompt_ids)
-                outputs.append(output)
-                is_valid.append(_is_valid)
-                if consolidate_entry.information:
-                    all_extractions.extend(consolidate_entry.information)
+                extraction_info = consolidate_entry.information if consolidate_entry.information else []
+                extraction_info = list(set(extraction_info))  # Deduplicate
+                if iteration == i and extractor_type == 'exploration':
+                    prompt_ids = extractor_prompt_ids
+                    output = consolidate_output
+                    structure_reward = 1.0 if _is_valid else 0.0
 
-            all_extractions = list(set(all_extractions))  # Deduplicate
-            train_data = {
-                'sub_question': sub_question,
-                'explore_input_ids_list': prompt_ids,
-                'explore_output_list': outputs,
-                'explore_is_valid': is_valid,
-            }
-
-            # Reflection if not answerable
+            # reflection
             if answerable or not memory_data:
-                all_reflections = memory_data
+                # If the main question is answerable or no memory, skip reflection
+                reflection_info = memory_data
+                # Defer the training signal to memory update step
+                extractor_type = 'memory_update'
             else:
                 memory_str = format_memory(memory_data) if memory_data else ""
                 reflection_output, reflection_prompt_ids = await self._extract(
@@ -166,196 +177,100 @@ class StageAwareLoop(AgentLoopBase):
                 reflection_prompt_ids = reflection_prompt_ids[0]
                 reflection_txt =  self.tokenizer.decode(reflection_output.token_ids, skip_special_tokens=True)
                 reflection_entry, _is_valid = self.parse_extractor_outputs(reflection_txt)
-                train_data['reflection_input_ids'] = [reflection_prompt_ids]
-                train_data['reflection_output'] = [reflection_output]
-                train_data['reflection_is_valid'] = [_is_valid]
-                all_reflections = reflection_entry.information
+                reflection_info = reflection_entry.information
+                reflection_info = list(set(reflection_info))  # Deduplicate
+                if iteration == i and extractor_type == 'reflection':
+                    prompt_ids = reflection_prompt_ids
+                    output = reflection_output
+                    structure_reward = 1.0 if _is_valid else 0.0
 
             # Step 4: Subanswer generation
+            should_break = False
             sub_answer = await self._subanswer_generation(
                 question=sub_question if not answerable else question,
-                explored_data=all_extractions,
-                memory_data=all_reflections,
+                explored_data=extraction_info,
+                memory_data=reflection_info,
                 reasoning_trace=reasoning_traces,
                 main_question_answerable=answerable,
                 agent_kwargs=generator_kwargs,
             )
             if sub_answer is None or not sub_answer.strip():
+                logger.warning(f"Subanswer generation returned empty answer at iteration {i}. Ending loop.")
+                should_break = True
                 final_answer = format_memory(reasoning_traces) if reasoning_traces else None
-                break
-
-            if answerable:
-                final_answer = sub_answer
-                all_train_data.append(train_data)
-                break
-            else:
-                train_data["sub_answer"] = sub_answer
+            if iteration == i:
+                to_eval_subquestion = sub_question
+                to_eval_subanswer = sub_answer if sub_answer else None
 
             # Step 5: Update memory and reasoning traces
             reasoning_step = f"{sub_question}\n{sub_answer}"
             if reasoning_step not in reasoning_traces:
                 reasoning_traces.append(reasoning_step)
             else:
-                all_train_data.append(train_data)
                 final_answer = format_memory(reasoning_traces) if reasoning_traces else None
-                break
+                should_break = True
 
-            if all_extractions:
-                extraction_text = format_memory(all_extractions)
-                current_memory = format_memory(memory_data)
-                context = format_reflection_context(current_memory=current_memory, explored_data=extraction_text)
-                update_memory_output, update_memory_prompt_ids = await self._extract(
-                    question, [context], sampling_params
-                )
-                update_memory_output = update_memory_output[0]
-                update_memory_prompt_ids = update_memory_prompt_ids[0]
-                update_memory_txt = self.tokenizer.decode(update_memory_output.token_ids, skip_special_tokens=True)
-                update_memory_entry, is_valid = self.parse_extractor_outputs(update_memory_txt)
-                train_data['update_memory_input_ids'] = [update_memory_prompt_ids]
-                train_data['update_memory_output'] = [update_memory_output]
-                train_data['update_memory_is_valid'] = [is_valid]
-                _memory_data = update_memory_entry.information
-                _memory_data = list(set(_memory_data))  # Deduplicate
-                _memory_data.sort()
-                memory_data = _memory_data
-            all_train_data.append(train_data)
-
-        # Compute rewards for the trajectory
-        reward_tasks = []
-        is_outcome_aware = False
-        # Outcome-aware reward
-        if final_answer and correct_answer:
-            reward_tasks.append(
-                self._evaluate_final_answer(question, final_answer, correct_answer, evaluator_kwargs)
+            extraction_text = format_memory(extraction_info) if extraction_info else ""
+            current_memory = format_memory(memory_data)
+            context = format_reflection_context(current_memory=current_memory, explored_data=extraction_text)
+            update_memory_output, update_memory_prompt_ids = await self._extract(
+                question, [context], sampling_params
             )
-            is_outcome_aware = True
-        
-        qa_pairs = []
-        train_data = []
-        i = 0
-        print(f"Total training steps collected: {len(all_train_data)}")
-        print(f"All training data: {json.dumps(all_train_data, indent=2)}")
-        for data in all_train_data:
-            if "sub_question" in data and "sub_answer" in data:
-                # Only keep the training data which has valid sub_question and sub_answer
-                if data["sub_question"] and data["sub_answer"]:
-                    qa_pairs.append((data["sub_question"], data["sub_answer"], i))
-                    reward_tasks.append(self._judge_answer(data["sub_question"], data["sub_answer"], evaluator_kwargs))
-                    train_data.append(data) 
-                    i = i + 1
+            update_memory_output = update_memory_output[0]
+            update_memory_prompt_ids = update_memory_prompt_ids[0]
+            update_memory_txt = self.tokenizer.decode(update_memory_output.token_ids, skip_special_tokens=True)
+            update_memory_entry, is_valid = self.parse_extractor_outputs(update_memory_txt)
+            if iteration == i and extractor_type == 'memory_update':
+                prompt_ids = update_memory_prompt_ids
+                output = update_memory_output
+                structure_reward = 1.0 if is_valid else 0.0
+            if update_memory_entry.information:
+                memory_data = list(set(update_memory_entry.information))  # Deduplicate
             else:
-                # Keep the memory update and reflection data
-                train_data.append(data)
-                i = i + 1
+                logger.info(f"No new memory extracted at iteration {i}. Keeping existing memory.")
+            
+            if should_break:
+                break
+        
+        # Reasoning reward
         if reasoning_traces:
-            reward_tasks.append(
-                self._evaluate_path(reasoning_traces, question, correct_answer, evaluator_kwargs)
-            )
+            reasoning_reward = await self._evaluate_path(reasoning_traces, question, correct_answer, evaluator_kwargs)
+        else:
+            reasoning_reward = None
+            logger.warning(f"Reasoning traces are empty. Setting reasoning reward to None.")
+        # Outcome-aware reward
+        if final_answer:
+            outcome_reward = await self._evaluate_final_answer(question, final_answer, correct_answer, evaluator_kwargs)
+        else:
+            outcome_reward = reasoning_reward
+            logger.warning(f"Final answer is missing. Setting outcome reward to None.")
+        # Path-aware reward
+        if to_eval_subquestion and to_eval_subanswer:
+            step_reward = await self._judge_answer(to_eval_subquestion, to_eval_subanswer, evaluator_kwargs)
+        else:
+            step_reward = None
+            logger.warning(f"Subquestion or subanswer for step reward is missing. Setting step reward to None.")
+        reward = [structure_reward] 
+        if step_reward is not None and extractor_type in ['exploration', 'reflection']:
+            reward.append(step_reward)
+        if outcome_reward is not None:
+            reward.append(outcome_reward)
+        reward = sum(reward) / len(reward) if reward else 0.0
+        logger.info(f"Computed rewards - Structure: {structure_reward}, Step: {step_reward}, Outcome: {outcome_reward}, Reasoning: {reasoning_reward}, Combined: {reward}")
 
-        all_prompt_ids = []
-        all_response_ids = []
-        all_response_masks = []
-        all_response_logprobs = []
-        instance_id = []
-        reward = []
-        rewards = await asyncio.gather(*reward_tasks)
-        outcome_reward = rewards[0] if is_outcome_aware else None
-        rewards = rewards[1:] if is_outcome_aware else rewards
-        whole_path_reward = rewards[-1] if reasoning_traces else None
-        rewards = rewards[:-1] if reasoning_traces else rewards
-        assert len(rewards) == len(qa_pairs), f"Number of rewards {len(rewards)} does not match number of QA pairs {len(qa_pairs)}"
-        for (q, a, idx), r in zip(qa_pairs, rewards, strict=True):
-            train_data[idx]['step_reward'] = r
-        avg_step_reward = sum(rewards) / len(rewards) if rewards else None
-        for data in train_data:
-            if "explore_input_ids_list" in data and "explore_output_list" in data:
-                qa_pair = f"{example_id}-{data['sub_question']}-explore"
-                _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
-                instance_id.extend([_id] * len(data["explore_input_ids_list"]))
-                all_prompt_ids.extend(data["explore_input_ids_list"])
-                all_response_ids.extend([output.token_ids for output in data["explore_output_list"]])
-                all_response_masks.extend([[1]*len(output.token_ids) for output in data["explore_output_list"]])
-                all_response_logprobs.extend([output.log_probs if output.log_probs else None for output in data["explore_output_list"]])
-                structure_reward = [1 if is_valid else 0.2 for is_valid in data["explore_is_valid"]]
-                step_reward = data["step_reward"]
-                if whole_path_reward:
-                    step_reward = 0.75 * step_reward + 0.25 * whole_path_reward
-                logger.debug(f"Structure rewards for exploration: {structure_reward}")
-                logger.debug(f"Step reward for exploration: {step_reward}")
-                reward.extend([step_reward * sr for sr in structure_reward])
-            if "reflection_input_ids" in data and "reflection_output" in data:
-                qa_pair = f"{example_id}-{data['sub_question']}-reflection"
-                _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
-                instance_id.append(_id)
-                all_prompt_ids.append(data["reflection_input_ids"][0])
-                all_response_ids.append(data["reflection_output"][0].token_ids)
-                all_response_masks.append([1]*len(data["reflection_output"][0].token_ids))
-                all_response_logprobs.append(data["reflection_output"][0].log_probs if data["reflection_output"][0].log_probs else None)
-                structure_reward = [1 if data["reflection_is_valid"][0] else 0.2]
-                step_reward = data["step_reward"]
-                if whole_path_reward:
-                    step_reward = 0.75 * step_reward + 0.25 * whole_path_reward
-                logger.debug(f"Structure reward for reflection: {structure_reward[0]}")
-                logger.debug(f"Step reward for reflection: {step_reward}")
-                reward.append(step_reward * structure_reward[0])
-            if "update_memory_input_ids" in data and "update_memory_output" in data:
-                qa_pair = f"{example_id}-{question}-memory_update"
-                _id = int(sha256(qa_pair.encode('utf-8')).hexdigest(), 16)
-                instance_id.append(_id)
-                if outcome_reward is None:
-                    if whole_path_reward:
-                        outcome_reward = whole_path_reward
-                    else:
-                        outcome_reward = avg_step_reward
-                if outcome_reward is None:
-                    continue
-                else:
-                    if whole_path_reward:
-                        reward_value = 0.9 * outcome_reward + 0.1 * whole_path_reward
-                    else:
-                        reward_value = outcome_reward
-                logger.debug(f"Using reward {reward_value} for memory update.")
-                all_prompt_ids.append(data["update_memory_input_ids"][0])
-                all_response_ids.append(data["update_memory_output"][0].token_ids)
-                all_response_masks.append([1]*len(data["update_memory_output"][0].token_ids))
-                all_response_logprobs.append(data["update_memory_output"][0].log_probs if data["update_memory_output"][0].log_probs else None)
-                structure_reward = [1 if data["update_memory_is_valid"][0] else 0.2]
-                logger.debug(f"Structure reward for memory update: {structure_reward[0]}")
-                reward.append(reward_value * structure_reward[0])
-
-        assert len(all_prompt_ids) == len(all_response_ids) == len(all_response_masks) == len(all_response_logprobs), (
-            f"Length mismatch: {len(all_prompt_ids)} prompts, {len(all_response_ids)} responses, {len(all_response_masks)} masks, {len(all_response_logprobs)} logprobs"
-        )
-        assert len(all_prompt_ids) == len(reward), f"Number of rewards {len(reward)} does not match number of training examples {len(all_prompt_ids)}"
-        assert len(all_prompt_ids) == len(instance_id), f"Number of instance IDs {len(instance_id)} does not match number of training examples {len(all_prompt_ids)}"
-        all_prompt_ids = [ids[: self.prompt_length] for ids in all_prompt_ids]
-        all_response_ids = [ids[: self.response_length] for ids in all_response_ids]
-        all_response_masks = [mask[: self.response_length] for mask in all_response_masks]
-        all_response_logprobs = [logprobs[: self.response_length] if logprobs else None for logprobs in all_response_logprobs]
-        logger.info(f"Generated {len(all_prompt_ids)} training examples for question: {question}")
-        logger.info(f"Rewards: {reward}")
-        outputs: list[AgentLoopOutput] = []
-        for i in range(len(all_prompt_ids)):
-            reward_score = reward[i] 
-            _id = instance_id[i] 
-            outputs.append(
-                AgentLoopOutput(
-                    prompt_ids=all_prompt_ids[i],
-                    response_ids=all_response_ids[i],
-                    response_mask=all_response_masks[i],
-                    response_logprobs=all_response_logprobs[i],
+        response_ids = output.token_ids
+        response_mask = [1] * len(response_ids)
+        response_logprobs = output.log_probs if output.log_probs else None
+        return AgentLoopOutput(
+                    prompt_ids=prompt_ids,
+                    response_ids=response_ids,
+                    response_mask=response_mask,
+                    response_logprobs=response_logprobs,
                     multi_modal_data={},
                     num_turns=2,
-                    reward_score=reward_score,
-                    metrics=metrics_model,
-                    extra_fields={'uid': example_id, '_id': _id}
+                    reward_score=reward,
+                    metrics=metrics_model
                 )
-            )
-        if len(outputs) % 8 != 0:
-            # Add duplicates to make the batch size a multiple of 8
-            n_to_add = 8 - (len(outputs) % 8)
-            outputs.extend([copy.deepcopy(outputs[-1]) for _ in range(n_to_add)]) # add duplicates of the last element, i.e., the memory update
-        return outputs
         
     def parse_extractor_outputs(self, text: str):
         reasoning_txt, output_txt = self.reasoning_parser.extract_reasoning_content(text, None)
@@ -366,8 +281,7 @@ class StageAwareLoop(AgentLoopBase):
                 extractor_output = extract.ExtractOutput.model_validate_json(output_txt)
                 is_valid = True
             except Exception as e:
-                # logger.warning(f"Failed to decode extractor output: {e}")
-                is_valid = False
+                is_valid = True
                 keys = extract.ExtractOutput.model_fields.keys()
                 value_types = [field.annotation.__name__ for field in extract.ExtractOutput.model_fields.values()]
                 extractor_output = extract_info_from_text(text, keys, value_types)
@@ -375,9 +289,14 @@ class StageAwareLoop(AgentLoopBase):
                 if isinstance(info, str):
                     info = [info]
                 if not isinstance(info, list):
+                    is_valid = False
                     info = []
                 decision = extractor_output.get("decision", "not_relevant")
                 if decision not in ["relevant", "not_relevant"]:
+                    is_valid = False
+                    decision = "not_relevant"
+                if not info and decision == "relevant":
+                    is_valid = False
                     decision = "not_relevant"
                 extractor_output = extract.ExtractOutput(
                     information=info,

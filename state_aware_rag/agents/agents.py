@@ -2,12 +2,13 @@ import json
 import logging
 import os
 import threading
+import asyncio
+import concurrent.futures
 from contextlib import ExitStack
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, TypeVar
 from pydantic import BaseModel
 from uuid import uuid4
-import ray
 # from verl.utils.rollout_trace import rollout_trace_op
 
 from state_aware_rag.agents.retriever_agents import RetrieverAgent
@@ -37,51 +38,38 @@ class PoolMode(Enum):
     ThreadMode = 1
     ProcessMode = 2
 
-@ray.remote(concurrency_groups={"acquire": 1, "release": 10})
-class TokenBucketWorker:
-    """Ray actor for rate limiting using token bucket algorithm."""
 
-    def __init__(self, rate_limit: int):
-        self.rate_limit = rate_limit
-        self.current_count = 0  # For observability
-        self._semaphore = threading.Semaphore(rate_limit)
+# Simple, process-local global semaphore registry to emulate a shared rate limiter
+_GLOBAL_SEMAPHORES: Dict[int, threading.Semaphore] = {}
+_GLOBAL_SEMAPHORES_LOCK = threading.Lock()
 
-    @ray.method(concurrency_group="acquire")
-    def acquire(self):
-        """Acquire a token from the bucket."""
-        self._semaphore.acquire()
-        self.current_count += 1
 
-    @ray.method(concurrency_group="release")
-    def release(self):
-        """Release a token back to the bucket."""
-        self._semaphore.release()
-        self.current_count -= 1
-
-    def get_current_count(self):
-        """Get current number of acquired tokens."""
-        return self.current_count
+def _get_global_semaphore(rate_limit: int) -> threading.Semaphore:
+    # One semaphore per rate value within this process
+    with _GLOBAL_SEMAPHORES_LOCK:
+        sem = _GLOBAL_SEMAPHORES.get(rate_limit)
+        if sem is None:
+            sem = threading.BoundedSemaphore(rate_limit)
+            _GLOBAL_SEMAPHORES[rate_limit] = sem
+        return sem
 
 
 class AgentExecutionWorker:
 
-    def __init__(self, enable_global_rate_limit=True, rate_limit=10):
-        self.rate_limit_worker = (
-            TokenBucketWorker.options(name="rate-limiter", get_if_exists=True).remote(rate_limit)
-            if enable_global_rate_limit
-            else None
-        )
+    def __init__(self, enable_global_rate_limit: bool = True, rate_limit: int = 10):
+        self._semaphore: Optional[threading.Semaphore] = _get_global_semaphore(rate_limit) if enable_global_rate_limit else None
 
     def ping(self):
         return True
-    
+
     def execute(self, fn: Callable[..., T], *fn_args, **fn_kwargs) -> T:
-        if self.rate_limit_worker:
-            with ExitStack() as stack:
-                stack.callback(self.rate_limit_worker.release.remote)
-                ray.get(self.rate_limit_worker.acquire.remote())
-                return fn(*fn_args, **fn_kwargs)
-        return fn(*fn_args, **fn_kwargs)
+        if self._semaphore is None:
+            return fn(*fn_args, **fn_kwargs)
+        self._semaphore.acquire()
+        try:
+            return fn(*fn_args, **fn_kwargs)
+        finally:
+            self._semaphore.release()
 
 
 class BaseAgent:
@@ -91,13 +79,16 @@ class BaseAgent:
         
         # Worker and rate limiting configuration
         self.num_workers = config.get("num_workers", 120)
-        self.rate_limit = config.get("rate_limit", 120)
-        self.timeout = config.get("timeout", 300)
-        self.enable_global_rate_limit = config.get("enable_global_rate_limit", True)
-        self.excution_pool = ray.remote(AgentExecutionWorker).options(max_concurrency=self.num_workers).remote(
+        self.rate_limit = config.get("rate_limit", 1000)
+        self.timeout = config.get("timeout", 1000)
+        self.enable_global_rate_limit = config.get("enable_global_rate_limit", False)
+        # Local execution worker and thread pool executor
+        self.excution_pool = AgentExecutionWorker(
             enable_global_rate_limit=self.enable_global_rate_limit,
             rate_limit=self.rate_limit,
         )
+        # Thread pool to allow concurrent execute() calls up to num_workers
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers, thread_name_prefix=f"{self.name}-exec")
 
         self._instance_dict: Dict[str, Dict[str, Any]] = {}
 
@@ -136,8 +127,11 @@ class BaseAgent:
             agent_metrics: The metrics of the agent.
         """
         timeout = self.timeout
+        loop = asyncio.get_running_loop()
         try:
-            results, metadata = await self.excution_pool.execute.remote(self.run, instance_id, parameters)
+            # Run the work in the thread pool with optional rate limiting
+            fut = loop.run_in_executor(self._executor, self.excution_pool.execute, self.run, instance_id, parameters)
+            results, metadata = await asyncio.wait_for(fut, timeout=timeout)
 
             self._instance_dict[instance_id] = {
                 "results": results,
@@ -149,6 +143,10 @@ class BaseAgent:
                 if k.startswith("metric/"):
                     metrics[k[7:]] = v
             return results, 0.0, metrics
+        except asyncio.TimeoutError:
+            error_msg = f"Execution timed out after {timeout}s"
+            logger.error(f"[EnvAgent] {error_msg}")
+            return {"error": error_msg}, 0.0, {"error": error_msg}
         except Exception as e:
             error_result = json.dumps({"result": f"Search execution failed: {e}"})
             logger.error(f"[EnvAgent] Execution failed: {e}")

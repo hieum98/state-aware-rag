@@ -79,10 +79,11 @@ def search_with_cot(
         )
             
         cot = do_rollout(node=root_node)
-        answer_node = cot[-1] if cot else root_node
-        if answer_node.node_type is not NodeType.FINAL_ANSWER:
-            all_answer_nodes.append(answer_node)
-            print(f"Warning: The last node in the rollout is not a final answer node, it is of type {answer_node.node_type}.")
+        answer_node = root_node.leaves
+        answer_node = [node for node in answer_node if node.node_type != NodeType.USER_QUESTION]
+        if len(answer_node) == 0:
+            print(f"No answer node found in rollout {i}.")
+            continue
         if verbose:
             print_tree_from_root(root_node)
 
@@ -90,7 +91,7 @@ def search_with_cot(
             node: ReasoningNode
             node.set_rollout_id(i)
             nodes.append(node)
-            if node.node_type is NodeType.FINAL_ANSWER or node in all_answer_nodes:
+            if node in answer_node:
                 reasoning_path = node.get_path()
                 reasoning_path, _ = node.get_reasoning_trace(path=reasoning_path)
                 if node.node_type is NodeType.FINAL_ANSWER:
@@ -99,11 +100,11 @@ def search_with_cot(
                 else:
                     answer = reasoning_path
                     detailed_answer = reasoning_path
-                answers.append(answer)
-                full_answers.append(detailed_answer)
-                solutions.append(node.get_node())
-            
-                if reasoning_path is not None:
+                if answer and answer.strip():
+                    answers.append(answer)
+                if detailed_answer and detailed_answer.strip():
+                    full_answers.append(detailed_answer)            
+                if reasoning_path and reasoning_path.strip():
                     reasoning_paths.append(reasoning_path)
                 else:
                     # If the reasoning path is None, we only append the node content of the final answer
@@ -114,24 +115,19 @@ def search_with_cot(
         final_answer = None
         final_reasoning = None
     try:
-        total_length = sum([len(full_answer.split()) for full_answer in full_answers])
-        if total_length < 20000: # Prevent exceeding the token limit
-            selected_answers = full_answers
+        full_answers = [fa for fa in full_answers if fa and fa.strip()]
+        if len(full_answers) == 0:
+            agent_input = {
+                'evaluate_fn': 'synthesize_final_answer',
+                'question': user_question,
+                'answers': answers,
+            }
         else:
-            l = 0
-            selected_answers = []
-            random.shuffle(full_answers)  # Shuffle the full answers to ensure randomness in selection
-            for full_answer in full_answers:
-                if l < 20000:
-                    selected_answers.append(full_answer)
-                    l += len(full_answer.split())
-                else:
-                    break
-        agent_input = {
-            'evaluate_fn': 'synthesize_final_answer',
-            'question': user_question,
-            'answers': selected_answers,
-        }
+            agent_input = {
+                'evaluate_fn': 'synthesize_final_answer',
+                'question': user_question,
+                'answers': full_answers,
+            }
         instance_id, _ = asyncio.run(evaluator.create())
         response, _, _ = asyncio.run(evaluator.execute(instance_id, agent_input))
         final_answer = response['final_answer']
@@ -194,13 +190,32 @@ def search(
             verbose=verbose
         )
         nodes = []
-        all_answer_nodes = []
         answers = []
         full_answers = []
+        leaf_nodes = root_node.leaves
+        leaf_nodes = [node for node in leaf_nodes if node.node_type != NodeType.USER_QUESTION]
+        if len(leaf_nodes) == 0:
+            # If no leaf nodes found, fallback to normal search
+            final_answer, final_reasoning, reasoning_paths = search_with_cot(
+                generator=generator,
+                evaluator=evaluator,
+                extractor=extractor,
+                retriever=retriever,
+                user_question=user_question,
+                question_id=question_id,
+                max_depth=max_depth,
+                golden_answer=golden_answer,
+                num_rollouts=num_rollouts,
+                save_tree=save_tree,
+                save_dir=save_dir,
+                top_k=top_k,
+                verbose=verbose,
+            )
+
         for _, _, node in RenderTree(root_node):
             node: ReasoningNode
             nodes.append(node)
-            if node.node_type is NodeType.FINAL_ANSWER or node in all_answer_nodes:
+            if node in leaf_nodes:
                 reasoning_path, _ = node.get_reasoning_trace()
                 if node.node_type is NodeType.FINAL_ANSWER:
                     answer = node.state['node_content']
@@ -217,24 +232,19 @@ def search(
             final_answer = None
             final_reasoning = None
         try:
-            total_length = sum([len(full_answer.split()) for full_answer in full_answers])
-            if total_length < 20000: # Prevent exceeding the token limit
-                selected_answers = full_answers
+            full_answers = [fa for fa in full_answers if fa and fa.strip()]
+            if len(full_answers) == 0:
+                agent_input = {
+                    'evaluate_fn': 'synthesize_final_answer',
+                    'question': user_question,
+                    'answers': answers,
+                }
             else:
-                l = 0
-                selected_answers = []
-                random.shuffle(full_answers)  # Shuffle the full answers to ensure randomness in selection
-                for full_answer in full_answers:
-                    if l < 20000:
-                        selected_answers.append(full_answer)
-                        l += len(full_answer.split())
-                    else:
-                        break
-            agent_input = {
-                'evaluate_fn': 'synthesize_final_answer',
-                'question': user_question,
-                'answers': selected_answers,
-            }
+                agent_input = {
+                    'evaluate_fn': 'synthesize_final_answer',
+                    'question': user_question,
+                    'answers': full_answers,
+                }
             instance_id, _ = asyncio.run(evaluator.create())
             response, _, _ = asyncio.run(evaluator.execute(instance_id, agent_input))
             final_answer = response['final_answer']

@@ -36,7 +36,7 @@ def base_config():
     return cfg_dict
 
 
-def test_evaluate_final_answer(ray_cluster, base_config):
+def test_evaluate_final_answer(base_config):
     agent = EvaluatorAgent(config=base_config)
     parameters = {
         "evaluate_fn": "evaluate_final_answer",

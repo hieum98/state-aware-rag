@@ -332,9 +332,20 @@ def search(
             detailed_answer = node.state['detailed_answer']
             memory = node.memory
             memory_str = format_memory(memory)
-            all_memories.append(memory_str)
-            answers.append(answer)
-            full_answers.append(detailed_answer)
+            if memory_str:
+                all_memories.append(memory_str)
+            if answer and answer.strip():
+                answers.append(answer)
+            if detailed_answer and detailed_answer.strip():
+                full_answers.append(detailed_answer)
+    if len(answers) == 0:
+        leaf_nodes = root_node.leaves
+        for leaf in leaf_nodes:
+            answer = format_memory(leaf.memory)
+            if answer and answer.strip():
+                answers.append(answer)
+                full_answers.append(answer)
+                all_memories.append(answer)
 
     # Major voting to find the best solution from the solution nodes of the final tree
     if len(answers) == 0:
@@ -342,25 +353,19 @@ def search(
         final_answer = None
         final_reasoning = None
     try:
-        total_length = sum([len(full_answer.split()) for full_answer in full_answers])
-        if total_length < 20000: # Prevent exceeding the token limit
-            selected_answers = full_answers
+        full_answers = [fa for fa in full_answers if fa and fa.strip()]
+        if len(full_answers) == 0:
+            agent_input = {
+                'evaluate_fn': 'synthesize_final_answer',
+                'question': user_question,
+                'answers': answers,
+            }
         else:
-            l = 0
-            selected_answers = []
-            random.shuffle(full_answers)  # Shuffle the full answers to ensure randomness in selection
-            for full_answer in full_answers:
-                if l < 20000:
-                    selected_answers.append(full_answer)
-                    l += len(full_answer.split())
-                else:
-                    break
-        
-        agent_input = {
-            'evaluate_fn': 'synthesize_final_answer',
-            'question': user_question,
-            'answers': selected_answers,
-        }
+            agent_input = {
+                'evaluate_fn': 'synthesize_final_answer',
+                'question': user_question,
+                'answers': full_answers,
+            }
         instance_id, _ = asyncio.run(evaluator.create())
         response, _, _ = asyncio.run(evaluator.execute(instance_id, agent_input))
         final_answer = response['final_answer']

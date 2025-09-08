@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, Union
 import datasets
 import hydra
 from hydra import utils as hy_utils
-import ray
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
@@ -16,53 +15,21 @@ from state_aware_rag.agents.agents import (
 )
 from state_aware_rag.preprocess.utils import simple_preprocess
 
-@ray.remote
-def _process_chunk_remote(
-    agent_cfg: Dict[str, Any],
-    search_cfg: Dict[str, Any],
-    mode: str,
-    data_name: Optional[str],
-    examples: List[Dict[str, Any]],
-):
-    """Process a chunk of examples in a Ray task with fresh agent instances.
+# Lazy, per-process agent cache for HF datasets multiprocessing workers
+_AGENTS_CACHE: Dict[str, Any] = {}
 
-    Returns a list of dicts: {"idx": int, "pred": Any, "detailed_answer": str}
-    """
-    generator = GeneratorAgent(config=agent_cfg["generator"])  
-    retriever = RetrievalAgent(config=agent_cfg["retriever"])  
-    extractor = ExtractorAgent(config=agent_cfg["extractor"])  
-    evaluator = EvaluatorAgent(config=agent_cfg["evaluator"])  
-
-    out: List[Dict[str, Any]] = []
-    for ex in examples:
-        res = generate_answer(
-            question=ex["question"],
-            generator=generator,
-            evaluator=evaluator,
-            extractor=extractor,
-            retriever=retriever,
-            question_id=f"{data_name}_{ex['id']}" if data_name is not None and "id" in ex else None,
-            golden_answer=ex.get("golden_answers"),
-            mode=mode,
-            search=search_cfg,
-        )
-        out.append({"idx": ex["_idx"], "pred": res.get("pred"), "detailed_answer": res.get("detailed_answer")})
-    return out
-
-
-def _chunk_indices(total: int, num_chunks: int) -> List[List[int]]:
-    num_chunks = max(1, min(num_chunks, total))
-    base = total // num_chunks
-    rem = total % num_chunks
-    chunks: List[List[int]] = []
-    start = 0
-    for i in range(num_chunks):
-        size = base + (1 if i < rem else 0)
-        end = start + size
-        if size > 0:
-            chunks.append(list(range(start, end)))
-        start = end
-    return chunks
+def _get_or_init_agents(agent_cfg: Dict[str, Any]):
+    global _AGENTS_CACHE
+    if _AGENTS_CACHE:
+        return _AGENTS_CACHE
+    # Initialize fresh agent instances in this worker process
+    _AGENTS_CACHE = {
+        "generator": GeneratorAgent(config=agent_cfg["generator"]),
+        "retriever": RetrievalAgent(config=agent_cfg["retriever"]),
+        "extractor": ExtractorAgent(config=agent_cfg["extractor"]),
+        "evaluator": EvaluatorAgent(config=agent_cfg["evaluator"]),
+    }
+    return _AGENTS_CACHE
 
 
 def generate_answer(
@@ -266,10 +233,6 @@ def main(cfg: DictConfig):
     # Keep working directory stable (avoid hydra changing CWD)
     print("Config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
 
-    # Initialize Ray once in the driver; avoid initializing inside worker subprocesses
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True, log_to_driver=True, include_dashboard=False)
-
     mode = cfg.mode  # "mcts" or "cot"
     # Build output dirs (resolve relative to original cwd)
     results_dir = os.path.join(hy_utils.get_original_cwd(), _compute_results_dir(cfg))
@@ -309,68 +272,36 @@ def main(cfg: DictConfig):
     # Dataset mode
     ds = _load_dataset(cfg.data)
 
-    total = len(ds)
-    driver_parallelism = max(1, min(int(cfg.num_proc or 1), os.cpu_count() or 1))
-    if driver_parallelism > 1:
-        print(f"Driver-level chunked parallelism: {driver_parallelism} chunks for {total} examples.")
-        chunks = _chunk_indices(total, driver_parallelism)
-
-        def get_example(i: int):
-            ex = ds[i]
-            return {"_idx": i, "id": ex.get("id", i), "question": ex["question"], "golden_answers": ex.get("golden_answers")}
-
-        jobs = []
-        for idx_chunk in chunks:
-            examples = [get_example(i) for i in idx_chunk]
-            jobs.append(
-                _process_chunk_remote.remote(
-                    agent_cfg=agent_cfg,
-                    search_cfg=search_cfg,
-                    mode=mode,
-                    data_name=cfg.data.name,
-                    examples=examples,
-                )
-            )
-        # Track chunk completion progress
-        remaining = list(jobs)
-        results_lists = []
-        with tqdm(total=len(remaining), desc="chunks", unit="chunk") as pbar:
-            while remaining:
-                done, remaining = ray.wait(remaining, num_returns=1)
-                # each 'done' is a list with one ObjectRef
-                for ref in done:
-                    results_lists.append(ray.get(ref))
-                    pbar.update(1)
-        preds: List[Optional[str]] = [None] * total
-        detailed: List[Optional[str]] = [None] * total
-        for res_list in results_lists:
-            for item in res_list:
-                idx = item["idx"]
-                preds[idx] = item.get("pred")
-                detailed[idx] = item.get("detailed_answer")
-        ds = ds.add_column("pred", preds)
-        ds = ds.add_column("detailed_answer", detailed)
-    else:
-        generator = GeneratorAgent(config=agent_cfg["generator"])  
-        retriever = RetrievalAgent(config=agent_cfg["retriever"])  
-        extractor = ExtractorAgent(config=agent_cfg["extractor"])  
-        evaluator = EvaluatorAgent(config=agent_cfg["evaluator"])  
-
-        ds = ds.map(
-            lambda ex, idx: generate_answer(
-                question=ex["question"],
-                generator=generator,
-                evaluator=evaluator,
-                extractor=extractor,
-                retriever=retriever,
-                question_id=f"{cfg.data.name}_{ex['id']}" if "id" in ex else None,
-                golden_answer=ex.get("golden_answers"),
-                mode=mode,
-                search=search_cfg,
-            ),
-            with_indices=True,
-            num_proc=1,
+    # Map helper that lazily initializes agents per worker process
+    def _map_generate(ex, idx, *, agent_cfg: Dict[str, Any], search_cfg: Dict[str, Any], mode: str, data_name: Optional[str]):
+        agents = _get_or_init_agents(agent_cfg)
+        res = generate_answer(
+            question=ex["question"],
+            generator=agents["generator"],
+            evaluator=agents["evaluator"],
+            extractor=agents["extractor"],
+            retriever=agents["retriever"],
+            question_id=f"{data_name}_{ex['id']}" if data_name is not None and "id" in ex else None,
+            golden_answer=ex.get("golden_answers"),
+            mode=mode,
+            search=search_cfg,
         )
+        return res
+
+    num_proc = max(1, min(cfg.num_proc, os.cpu_count() or 1))
+    print(f"Running datasets.map with num_proc={num_proc}...")
+    ds = ds.map(
+        _map_generate,
+        with_indices=True,
+        fn_kwargs={
+            "agent_cfg": agent_cfg,
+            "search_cfg": search_cfg,
+            "mode": mode,
+            "data_name": cfg.data.name,
+        },
+        num_proc=num_proc,
+        desc="inference",
+    )
 
     ds.save_to_disk(results_dir)
     print(f"Results saved to {results_dir}")

@@ -14,6 +14,8 @@ source ~/users/hieuman/.bashrc
 conda activate rl-agent
 cd ~/users/hieuman/state-aware-rag
 
+ray stop --force || true
+
 # -------- Args --------
 print_usage() {
 	cat <<EOF
@@ -72,6 +74,10 @@ python -m inference \
 set +x
 
 
-
+# Remove all the log file with name SLURM_eval/%j/%x_eval.log if python script runs successfully
+LOG_FILE="SLURM_eval/${SLURM_JOB_ID}/${SLURM_JOB_NAME}_eval.log"
+if [ $? -eq 0 ]; then
+	rm -f "$LOG_FILE"
+fi
 
 

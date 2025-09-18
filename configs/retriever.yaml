@@ -1,0 +1,10 @@
+name: retriever
+online_retrieval_config:
+  url: "http://ip-10-4-233-95:5000/search"
+  query_instruction: null
+
+top_k: 5
+enable_global_rate_limit: false
+num_workers: 128
+rate_limit: 256
+timeout: 500

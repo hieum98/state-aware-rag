@@ -1,0 +1,5 @@
+encoder_model_base_url: http://localhost:8000/v1
+encoder_model_api_key: dummy-key
+encoder_name: qwen3
+corpus_path: data/wiki23-Qwen3-4B-Emb-Indexed
+index_path: data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss

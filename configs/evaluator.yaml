@@ -1,0 +1,23 @@
+name: evaluator
+client_kwargs:
+  # model_name: "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+  model_name: 'bedrock/us.deepseek.r1-v1:0'  # Use DeepSeek R1 model
+  url: null  # Use default URL for the model
+  api_key: null  # Set your API key if required
+  aws_profile_name: "hieu" # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
+  client_type: "litellm"
+  concurrency: 8
+
+generation_config:
+  temperature: 0.1
+  n: 3
+  top_p: 0.9
+  max_tokens: 4096
+  top_k: 20
+
+use_cache: true
+cache_dir: "cache/evaluator"
+enable_global_rate_limit: true
+num_workers: 16
+rate_limit: 16
+timeout: 1000

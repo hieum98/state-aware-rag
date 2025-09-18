@@ -1,0 +1,10 @@
+# You must make sure that the model and the index are compatible.
+# Run
+# vllm serve Qwen/Qwen3-Embedding-4B -dp 2 -tp 1 # to start the encoder server.
+# Get the node IP address and replace it in the following settings.
+encoder_model_base_url: http://0.0.0.0:8000/v1
+encoder_model_api_key: YOUR_OPENAI_API_KEY
+encoder_name: qwen3
+# Path settings
+corpus_path: data/wiki23-Qwen3-4B-Emb-Indexed
+index_path: data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss

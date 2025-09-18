@@ -1,0 +1,152 @@
+defaults:
+  - _self_
+
+# Run mode: mcts or cot
+mode: mcts
+
+# Optional single-question input. When provided and data.name is null, runs single question mode.
+question: null
+golden_answer: null
+
+# Concurrency for dataset.map
+num_proc: 8
+
+# Output root directory
+results_dir: results
+to_eval_path: null  # null to auto-compute based on cfg and timestamp
+
+search:
+  # Common
+  max_depth: 6
+  top_k: 3
+  num_rollouts: 10
+  use_golden_answer: false
+  save_tree: true
+  exploration_weight: 1.0
+  verbose: false
+  tree_dir: mcts_trees
+
+data:
+  name: 2wiki  # one of: 2wiki, 2wiki-eval, hotpotqa, musique, simpleqa, multi-hop-rag, bamboogle, frames, solutionbench, nq, triviaqa, popqa, mmlu, training_data_small, training_data
+  split: null # null to use default split for each dataset
+  limit: 1000
+  metrics:
+    - llm_judge
+    - sub_em
+
+agents:
+  generator:
+    name: generator
+    client_kwargs:
+      # model_name: "Qwen/Qwen3-4B-Thinking-2507"
+      # url: "http://ip-10-4-247-126:30000/v1"
+      model_name: "Qwen/Qwen3-30B-A3B-Thinking-2507"
+      url: "http://ip-10-4-224-9:30000/v1"
+      api_key: "Your-API-Key-Here"
+      client_type: "openai"
+      concurrency: 64
+      # model_name: "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+      # # 'model_name': 'bedrock/us.deepseek.r1-v1:0',  # Use DeepSeek R1 model
+      # url: null  # Use default URL for the model
+      # api_key: null  # Set your API key if required
+      # aws_profile_name: "hieu" # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
+      # client_type: "litellm"
+      # concurrency: 64
+    generation_config:
+      temperature: 1.0
+      n: 1
+      top_p: 0.9
+      max_tokens: 4096
+      top_k: 20
+    use_cache: true
+    cache_dir: "cache/generator"
+    enable_global_rate_limit: true
+    num_workers: 32
+    rate_limit: 256
+    timeout: 1000
+
+  evaluator: 
+    name: evaluator
+    client_kwargs:
+      # model_name: "Qwen/Qwen3-4B-Thinking-2507"
+      # url: "http://ip-10-4-247-126:30000/v1"
+      model_name: "Qwen/Qwen3-30B-A3B-Thinking-2507"
+      url: "http://ip-10-4-224-9:30000/v1"
+      api_key: "Your-API-Key-Here"
+      client_type: "openai"
+      concurrency: 64
+      # model_name: "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+      # # 'model_name': 'bedrock/us.deepseek.r1-v1:0',  # Use DeepSeek R1 model
+      # url: null  # Use default URL for the model
+      # api_key: null  # Set your API key if required
+      # aws_profile_name: "hieu" # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
+      # client_type: "litellm"
+      # concurrency: 64
+    generation_config:
+      temperature: 0.1
+      n: 3
+      top_p: 0.9
+      max_tokens: 4096
+      top_k: 20
+    use_cache: true
+    cache_dir: "cache/evaluator"
+    enable_global_rate_limit: true
+    num_workers: 32
+    rate_limit: 32
+    timeout: 1000
+
+  extractor:
+    name: extractor
+    client_kwargs:
+      model_name: "Hieuman/State-Aware-RAG-Extractor-4B.v0"
+      url: "http://ip-10-4-230-228:30000/v1"
+      api_key: "Your-API-Key-Here"
+      client_type: "openai"
+      concurrency: 64
+    generation_config:
+      temperature: 0.1
+      n: 3
+      top_p: 0.9
+      max_tokens: 4096
+      top_k: 20
+    use_cache: true
+    cache_dir: "cache/extractor"
+    enable_global_rate_limit: true
+    num_workers: 32
+    rate_limit: 256
+    timeout: 1000
+
+  retriever: 
+    name: retriever
+    online_retrieval_config:
+      url: "http://ip-10-4-233-95:5000/search"
+      query_instruction: null
+
+    top_k: 5
+    enable_global_rate_limit: true
+    num_workers: 32
+    rate_limit: 256
+    timeout: 1000
+
+  evaluator_metric: 
+    name: evaluator-metric
+    client_kwargs:
+      model_name: "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+      # 'model_name': 'bedrock/us.deepseek.r1-v1:0',  # Use DeepSeek R1 model
+      url: null  # Use default URL for the model
+      api_key: null  # Set your API key if required
+      aws_profile_name: "hieu" # 'aws_profile_name': 'hieu',  # Set your AWS profile name if using AWS Bedrock
+      client_type: "litellm"
+      concurrency: 64
+    generation_config:
+      temperature: 0.1
+      n: 3
+      top_p: 0.9
+      max_tokens: 4096
+      top_k: 20
+    use_cache: true
+    cache_dir: "cache/evaluator-metric"
+    enable_global_rate_limit: true
+    num_workers: 16
+    rate_limit: 16
+    timeout: 1000

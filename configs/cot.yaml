@@ -1,8 +1,0 @@
-is_cot: false
-max_depth: 8
-top_k: 3
-# exploration_weight: 1.0
-# num_rollouts: 10
-use_golden_answer: true
-save_tree: true
-tree_dir: "cot_trees"

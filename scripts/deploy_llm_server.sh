@@ -16,6 +16,8 @@ set -euo pipefail
 source ~/users/hieuman/.bashrc
 conda activate sglang_server
 
+cd ~/users/hieuman/state-aware-rag
+
 # -------- Args --------
 print_usage() {
   cat <<EOF
@@ -127,7 +129,7 @@ trap cleanup EXIT
 # Wait for server to be ready
 echo "[INFO] Waiting for server to be ready..." | tee -a "$LOG_FILE"
 READY=0
-for i in {1..300}; do
+for i in {1..3000}; do
   if grep -q "Uvicorn running on" "$LOG_FILE"; then READY=1; break; fi
   sleep 2
 done

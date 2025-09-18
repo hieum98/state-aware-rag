@@ -26,9 +26,14 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=ml-p4d-24xlarge-us-west-2d
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:8
 
 set -euo pipefail
+
+source ~/users/hieuman/.bashrc
+conda activate sglang_server
+
+cd ~/users/hieuman/state-aware-rag
 
 echo "[INFO] SLURM job ID: $SLURM_JOB_ID"
 echo "[INFO] Node list: $SLURM_NODELIST"
@@ -39,7 +44,7 @@ mkdir -p "$LOG_DIR"
 
 # -------- Parameters --------
 ENCODER_MODEL="Qwen/Qwen3-Embedding-4B"
-ENCODER_VISIBLE_GPUS=${ENCODER_VISIBLE_GPUS:-"0,1"}
+ENCODER_VISIBLE_GPUS=${ENCODER_VISIBLE_GPUS:-"0,1,2,3,4,5,6,7"}
 ENCODER_PORT=${ENCODER_PORT:-8000}
 
 RETRIEVER_PORT=${RETRIEVER_PORT:-5000}
@@ -49,36 +54,40 @@ echo "[INFO] Encoder GPUs:         ${ENCODER_VISIBLE_GPUS}"
 echo "[INFO] Encoder port:         ${ENCODER_PORT}"
 echo "[INFO] Retriever port:       ${RETRIEVER_PORT}"
 
-# Compute DP from number of visible GPUs; keep TP=1 for embedding models
-GPU_COUNT=$(python - <<'PY'
-import os
-g=os.environ.get('ENCODER_VISIBLE_GPUS','')
-print(len([x for x in g.split(',') if x.strip()!='']))
-PY
-)
-if [[ "$GPU_COUNT" -lt 1 ]]; then GPU_COUNT=1; fi
-TP=1
-DP=$GPU_COUNT
-
 cleanup() {
   echo "[INFO] Cleaning up background processes..."
   pkill -9 -f "vllm serve" || true
   pkill -9 -f "state_aware_rag.servers.retriever" || true
   pkill -9 uvicorn || true
+  pkill -9 sglang || true
+  pkill -9 python || true
 }
 trap cleanup EXIT SIGINT SIGTERM
 
 echo "[INFO] Activating conda environment for servers"
-source /fsx/ubuntu/users/hieuman/miniconda/bin/activate server || true
+source /fsx/ubuntu/users/hieuman/miniconda/bin/activate sglang_server || true
 source ~/.bashrc || true
+
+# Create log dir
+mkdir -p "$LOG_DIR"
 
 ### Start encoder (vLLM) server ###
 echo "[INFO] Launching embeddings server on ${HEAD_NODE} GPUs ${ENCODER_VISIBLE_GPUS}"
 CUDA_VISIBLE_DEVICES=${ENCODER_VISIBLE_GPUS} \
-vllm serve "${ENCODER_MODEL}" \
+# vllm serve "${ENCODER_MODEL}" \
+#   --host 0.0.0.0 \
+#   --port ${ENCODER_PORT} \
+#   --data-parallel-size 8 --tensor-parallel-size 1 \
+#   > "${LOG_DIR}/vllm_encoder.log" 2>&1 &
+python3 -m sglang.launch_server \
+  --model-path "${ENCODER_MODEL}" \
+  --is-embedding \
   --host 0.0.0.0 \
   --port ${ENCODER_PORT} \
-  -tp ${TP} -dp ${DP} \
+  --dp 8 \
+  --tp 1 \
+  --mem-fraction-static 0.9 \
+  --dtype bfloat16 \
   > "${LOG_DIR}/vllm_encoder.log" 2>&1 &
 
 echo "[INFO] Waiting for embeddings server to become ready..."
@@ -98,11 +107,15 @@ fi
 ENCODER_BASE_URL="http://${HEAD_NODE}:${ENCODER_PORT}/v1"
 echo "[INFO] Encoder base URL: ${ENCODER_BASE_URL}"
 
+conda activate server
 ### Start retriever server ###
+cd ~/users/hieuman/state-aware-rag
 echo "[INFO] Launching retriever server on port ${RETRIEVER_PORT}"
-python -m servers.retriever \
+python -m state_aware_rag.servers.retriever \
   --port ${RETRIEVER_PORT} \
-  --config servers/configs/retriever-Qwen3-4B-wiki-23.yaml \
+  --config configs/servers/retriever-Qwen3-4B-wiki-23.yaml \
+  --workers 8 \
+  --mmap_index \
   > "${LOG_DIR}/retriever_server.log" 2>&1 &
 
 echo "[INFO] Waiting for retriever server to become ready..."

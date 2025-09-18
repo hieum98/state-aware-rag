@@ -3,6 +3,6 @@
   retrieval_config_path: /fsx/ubuntu/users/hieuman/state-aware-rag/configs/retriever.yaml
   generator_config_path: /fsx/ubuntu/users/hieuman/state-aware-rag/configs/generator.yaml
   evaluator_config_path: /fsx/ubuntu/users/hieuman/state-aware-rag/configs/evaluator.yaml
-  max_iterations: 5
+  max_iterations: 10
   verbose: true
   

@@ -2,7 +2,7 @@
 #SBATCH -e SLURM_eval/%j/%x_eval.log
 #SBATCH -o SLURM_eval/%j/%x_eval.log
 #SBATCH -D ./
-#SBATCH -J hm-eval
+#SBATCH -J hm-eval-30B
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1  # Ensure 1 task per node
 #SBATCH --gres=gpu:0

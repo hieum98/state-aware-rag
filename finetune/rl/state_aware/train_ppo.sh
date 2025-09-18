@@ -81,13 +81,13 @@ echo "Actor LR: $actor_lr"
 # =================== wandb ===================
 mkdir -p /fsx/ubuntu/users/hieuman/.wandb
 export WANDB_CONFIG_DIR=/fsx/ubuntu/users/hieuman/.wandb
-export WANDB_API_KEY=0a5d858e0145e3fbcd538c3e73e1adf599122ef9
+export WANDB_API_KEY=""
 wandb login
 project_name=state-aware-rl
 default_local_dir="$PROJECT_ROOT_PATH/checkpoint/$experiment_name"
 
 # ================= algorithm =================
-adv_estimator=grpo
+adv_estimator=gae
 
 use_kl_in_reward=True # Tune
 kl_coef=0.001 # Tune
@@ -102,9 +102,9 @@ max_prompt_length=2048
 max_response_length=4096
 # actor_lr is set above (supports ENV/args/prompt/default)
 
-train_batch_size=8
-ppo_mini_batch_size=64
-n_resp_per_prompt=4
+train_batch_size=32
+ppo_mini_batch_size=32
+n_resp_per_prompt=1
 n_resp_per_prompt_val=1
 
 # =================== logging ===================
@@ -164,7 +164,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.agent.agent_loop_config_path=$agent_loop_config_path \
     actor_rollout_ref.rollout.agent.num_workers=8 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
-    actor_rollout_ref.rollout.n=$n_resp_per_prompt \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.9 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.1 \
     actor_rollout_ref.rollout.val_kwargs.n=$n_resp_per_prompt_val \
@@ -186,5 +185,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=20 \
     trainer.default_local_dir="$default_local_dir" \
     trainer.test_freq=-1 \
-    trainer.total_epochs=1 
+    trainer.total_epochs=5
 

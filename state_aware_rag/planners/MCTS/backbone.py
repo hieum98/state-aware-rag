@@ -88,8 +88,10 @@ class MCTS:
         if node is None:
             return # None node, no children to expand
         
-        self.children[node] = node.find_children(rollout_id) # Find the children of the node
-        logger.debug(f"Expanding node: {node}. Found {len(self.children[node])} children.")
+        children = node.find_children(rollout_id) # Find the children of the node
+        if children:
+            self.children[node] = children # Add the children to the tree
+            logger.debug(f"Expanding node: {node}. Found {len(self.children[node])} children.")
     
     def _simulate(self, node: Node, rollout_id=None) -> List[Node]:
         """
@@ -106,7 +108,9 @@ class MCTS:
                 return path
             
             if current_node not in self.children.keys():
-                self.children[current_node] = current_node.find_children(rollout_id) # Expand the node if it has no children
+                children = current_node.find_children(rollout_id)
+                if children:
+                    self.children[current_node] = children # Expand the node if it has no children
             
             # Handle empty child lists gracefully
             if not self.children[current_node]:

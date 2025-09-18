@@ -1,6 +1,14 @@
 from typing import List
 import datasets
 import os
+import argparse
+from pprint import pprint
+import logging
+import warnings
+import hydra
+from hydra import utils as hy_utils
+from omegaconf import OmegaConf
+from inference import _compute_results_dir, _maybe_load_agent_cfg
 
 from state_aware_rag.utils.metrics import (
     ExactMatch, 
@@ -9,6 +17,56 @@ from state_aware_rag.utils.metrics import (
     Retrieval_Recall,  
     LLMJudge
     )
+
+
+def _set_logging_warning():
+    """Reduce logging noise during evaluation by setting WARNING level globally.
+    Apply to common noisy libraries and silence warnings.
+    Call this both at import-time and inside main() to override Hydra's logging.
+    """
+    # Silence Python warnings
+    warnings.filterwarnings("ignore")
+
+    # Force root to WARNING and reset existing handlers if any were set
+    try:
+        logging.basicConfig(level=logging.WARNING, force=True)
+    except TypeError:
+        # Older Python fallback (force not supported)
+        logging.getLogger().setLevel(logging.WARNING)
+
+    # Quiet common libraries
+    for name in [
+        "hydra",
+        "omegaconf",
+        "urllib3",
+        "httpx",
+        "httpcore",
+        "openai",
+        "litellm",
+        "datasets",
+        "transformers",
+    ]:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+    # Datasets specific verbosity helper (safe if unavailable)
+    try:
+        from datasets.utils.logging import set_verbosity_warning as _ds_warn
+        _ds_warn()
+    except Exception:
+        pass
+
+    # Transformers specific verbosity helper (safe if unavailable)
+    try:
+        from transformers.utils.logging import set_verbosity_warning as _tf_warn
+        _tf_warn()
+    except Exception:
+        pass
+
+    os.environ["LOGGING_LEVEL"] = "WARN"
+
+
+# Apply at import time (may be overridden by Hydra; we'll set again in main)
+_set_logging_warning()
 
 
 def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_name: str = "default", **kwargs):
@@ -41,41 +99,9 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
             data = data.add_column('sub_em_detail', sub_em_detail)
             results['sub_em'] = sub_em_score
             print(f"Sub Exact Match Score: {sub_em_score}")
-        elif metric == 'retrieval_recall':
-            assert 'retrieval_result' in data.features, "Dataset must contain 'retrieval_result' field."
-            retrieval_recall_topk = kwargs.get('retrieval_recall_topk', 5)
-            metric_config['metric_setting'] = {
-                'retrieval_recall_topk': retrieval_recall_topk
-            }
-            retrieval_recall_metric = Retrieval_Recall(config=metric_config)
-            retrieval_recall_score, retrieval_recall_detail = retrieval_recall_metric.calculate_metric(data)
-            data = data.add_column(f"retrieval_recall_detail_{retrieval_recall_topk}", retrieval_recall_detail)
-            results['retrieval_recall'] = retrieval_recall_score
-            print(f"Retrieval Recall Score (Top-{retrieval_recall_topk}): {retrieval_recall_score}")
         elif metric == 'llm_judge':
             assert 'pred' in data.features and 'golden_answers' in data.features, "Dataset must contain 'pred' and 'golden_answers' fields."
-            default_llm_setting = {
-                'model_name': 'openai/judge', 
-                'url': 'http://0.0.0.0:30000/v1', 
-                'api_key': 'your_api_key_here',  # Replace with your actual API key
-                'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
-                'concurrency': 64,
-            }
-            default_generate_setting = {
-                'temperature': 0.1,  
-                'n': 1, 
-                'top_p': 0.9,
-                'max_tokens': 4096,  
-                # Want more varied responses (alongside high temperature) set top_k to 50 - 100 
-                # For greedy decoding set it to 1
-                'top_k': 20,
-                'tensor_parallel_size': 1,
-                'reasoning_effort': 'medium',  # Set to 'high'/'medium'/'low' for using thinking capabilities
-            }
-            metric_config['judge_setting'] = {
-                'llm_setting' : kwargs.get('llm_setting', default_llm_setting),
-                'generate_setting': kwargs.get('generate_setting', default_generate_setting),
-            }
+            metric_config['judge_setting'] = kwargs.get('llm_setting', None)
             llm_judge_metric = LLMJudge(config=metric_config)
             llm_judge_score, llm_judge_detail = llm_judge_metric.calculate_metric(data)
             data = data.add_column('llm_judge_detail', llm_judge_detail)
@@ -86,49 +112,32 @@ def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_
         
     return results, data
 
-
-def main():
-    import argparse
-    from pprint import pprint
-
-    parser = argparse.ArgumentParser(description="Compute evaluation metrics for a dataset.")
-    parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
-    parser.add_argument("--metrics", type=str, nargs='+', default=['all'], help="List of metrics to compute: 'f1', 'em', 'sub_em', 'retrieval_recall', 'llm_judge', or 'all' for all metrics.")
-    parser.add_argument("--dataset_name", type=str, default="default", help="Name of the dataset.")
-    parser.add_argument("--retrieval_recall_topk", type=int, default=5, help="Top-k for retrieval recall metric.")
-    parser.add_argument("--llm_judge_model_name", type=str, default='Qwen/Qwen3-8B', help="Model name for LLM judge metric.")
-    parser.add_argument("--api_url", type=str, default=None, help="API URL for LLM judge metric.")
-
-    args = parser.parse_args()
-
+@hydra.main(config_path="configs/infer", config_name="base", version_base=None)
+def main(cfg):
+    # Re-apply after Hydra config to ensure WARNING-only logs
+    _set_logging_warning()
+    print("Config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
+    data_path = cfg.to_eval_path
+    if data_path is None:
+        data_path = os.path.join(hy_utils.get_original_cwd(), _compute_results_dir(cfg))
     # Load the dataset
-    if args.dataset_path.endswith('.json'):
-        dataset = datasets.load_dataset('json', data_files=args.dataset_path, split='train')
-    else:
-        dataset = datasets.load_from_disk(args.dataset_path)
+    dataset = datasets.load_from_disk(data_path)
 
-    llm_setting = {
-            'model_name': f'openai/{args.llm_judge_model_name}', 
-            'url': args.api_url if args.api_url else 'http://0.0.0.0:30000/v1', 
-            'api_key': 'your_api_key_here',  # Replace with your actual API key
-            'client_type': 'openai',  # Use 'litellm' for LiteLLMClient or 'openai' for OpenAIClient
-            'concurrency': 64,
-        }
+    metric_model = _maybe_load_agent_cfg(cfg.agents.evaluator_metric)
     # Compute metrics
     results, updated_dataset = compute_metrics(
         data=dataset,
-        metrics=args.metrics,
-        dataset_name=args.dataset_name,
-        retrieval_recall_topk=args.retrieval_recall_topk,
-        llm_setting=llm_setting,
+        metrics=cfg.data.metrics,
+        dataset_name=cfg.data.name,
+        llm_setting=metric_model,
     )
 
     # Print results
     pprint(results)
     # Save the updated dataset
-    result_path = args.dataset_path + "_with_scores"
-    updated_dataset.save_to_disk(args.dataset_path + "_with_scores")
-    print(f"Updated dataset saved to '{args.dataset_path}_with_scores'.")
+    result_path = data_path + "_with_scores"
+    updated_dataset.save_to_disk(data_path + "_with_scores")
+    print(f"Updated dataset saved to '{data_path}_with_scores'.")
     # Save results to a file
     path = os.path.join(result_path, 'evaluation_results.json')
     with open(path, 'w') as f:

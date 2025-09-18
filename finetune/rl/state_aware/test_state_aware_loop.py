@@ -74,7 +74,7 @@ def test_state_aware_loop(ray_cluster, base_config):
         }
     )
     # n = base_config.actor_rollout_ref.rollout.n
-    # batch = batch.repeat(n)
+    batch = batch.repeat(8)
     print("Batch:", batch)
     results = agent_loop_manager.generate_sequences(prompts=batch)
     print("Results:", results)

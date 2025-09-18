@@ -71,7 +71,7 @@ def generate_answer(
     )
     detailed_answer = f"{final_reasoning}\n\nFinal Answer: {final_answer}"
     return {
-        "pred": final_answer,
+        "pred": str(final_answer),
         "detailed_answer": detailed_answer,
     }
 

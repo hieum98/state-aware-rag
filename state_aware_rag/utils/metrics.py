@@ -3,6 +3,7 @@
 
 import re
 import shutil
+import time
 from typing import Literal, Optional
 import datasets
 import numpy as np
@@ -520,17 +521,8 @@ class LLMJudge(BaseMetric):
     def __init__(self, config):
         super().__init__(config)
         from state_aware_rag.agents.agents import EvaluatorAgent
-        llm_args = config["judge_setting"]["llm_setting"]
-        generate_settings = config["judge_setting"]["generate_setting"]
-        self.evaluator_agent = EvaluatorAgent(
-            {
-                "client_kwargs": llm_args,
-                "generation_config": generate_settings,
-                "use_cache": False,
-                "cache_dir": "cache/evaluator",
-                "verbose": False,
-            }
-        )
+        metric_model_config = config.get("judge_setting", {})
+        self.evaluator_agent = EvaluatorAgent(metric_model_config)
 
     def calculate_metric(self, data):
         question_list = data['question']
@@ -543,10 +535,10 @@ class LLMJudge(BaseMetric):
         judge_list = []
         assert len(question_list) == len(pred_list) == len(golden_answers_list), "Length of question, pred and golden_answers must be the same."
         tasks = []
-        for i in tqdm.tqdm(range(0, len(question_list), 64)):
-            batch_questions = question_list[i:i+64]
-            batch_preds = pred_list[i:i+64]
-            batch_golden_answers = golden_answers_list[i:i+64]
+        for i in tqdm.tqdm(range(0, len(question_list), 16)):
+            batch_questions = question_list[i:i+16]
+            batch_preds = pred_list[i:i+16]
+            batch_golden_answers = golden_answers_list[i:i+16]
 
             # With golden answers
             params_with = {
@@ -555,34 +547,28 @@ class LLMJudge(BaseMetric):
                 "system_answer": batch_preds,
                 "correct_answer": batch_golden_answers,
             }
-            # Without golden answers
-            params_without = {
-                "evaluate_fn": "judge_answer",
-                "user_question": batch_questions,
-                "system_answer": batch_preds,
-            }
-            tasks.append(self.evaluator_agent.execute(instance_id=f"llm_judge_with_{i}", parameters=params_with))
-            tasks.append(self.evaluator_agent.execute(instance_id=f"llm_judge_without_{i}", parameters=params_without))
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        responses_all = loop.run_until_complete(asyncio.gather(*tasks))
-        loop.close()
-
-        for i in range(0, len(responses_all), 2):
-            responses, _, _ = responses_all[i]
-            responses_without_golden, _, _ = responses_all[i+1]
-            for s1, s2 in zip(responses, responses_without_golden, strict=True):
-                if s1 is None:
-                    s1 = 0
-                if s2 is None:
-                    s2 = 0
-                score_with_golden = float(s1)
-                score_without_golden = float(s2)
+            responses, _, _ = asyncio.run(self.evaluator_agent.execute(instance_id=f"llm_judge_with_{i}", parameters=params_with))
+            for x in responses:
+                if x is None:
+                    x = 0
                 judge_list.append({
-                    'score_with_golden': score_with_golden,
-                    'score_without_golden': score_without_golden,
+                    'score_with_golden': float(x),
+                    'score_without_golden': 0.0,
                 })
+            # Sleep to avoid rate limit
+            time.sleep(5)
 
+            # # Without golden answers
+            # params_without = {
+            #     "evaluate_fn": "judge_answer",
+            #     "user_question": batch_questions,
+            #     "system_answer": batch_preds,
+            # }
+            # responses_without_golden, _, _ = asyncio.run(self.evaluator_agent.execute(instance_id=f"llm_judge_without_{i}", parameters=params_without))
+        # loop = asyncio.new_event_loop()
+        # asyncio.set_event_loop(loop)
+        # responses_all = loop.run_until_complete(asyncio.gather(*tasks))
+        # loop.close()
         metric_with_golden = [res['score_with_golden'] for res in judge_list]
         metric_without_golden = [res['score_without_golden'] for res in judge_list]
 

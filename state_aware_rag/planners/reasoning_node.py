@@ -121,7 +121,7 @@ class ReasoningNode(NodeMixin):
             self.state["sub_question"] = question
             self.state["sub_answer"] = answer
             self.state["reasoning"] = reasoning
-            self.state["node_content"] = f"Q: {question}\nA: {answer}"
+            self.state["node_content"] = f"Q: {question}\nA: {answer}\nReasoning: {reasoning}"
         elif self.node_type == NodeType.REPHASED_QUESTION_NODE:
             self.state["node_content"] = question
         elif self.node_type == NodeType.SYNTHESIS_NODE:
@@ -221,6 +221,7 @@ class ReasoningNode(NodeMixin):
             raise ValueError(f"Unknown node type: {self.node_type}")
         
         children = list(set(children))  # Deduplicate children
+        children = [child for child in children if child]
         new_memory: Optional[List[str]] = None
         if all_explored_info:
             all_explored_info = list(set(all_explored_info))

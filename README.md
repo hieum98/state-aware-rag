@@ -66,8 +66,6 @@ Key files:
 - `configs/infer/` – Hydra configs for experiments
 - `cache/` – per-model LLM call cache
 
-Reasoning State:
-
 Each node logs: node type, memory snapshot, confidence, content (sub-question, answer, synthesis, final answer), plus lineage. Trees can be reloaded to continue or analyze.
 
 Quick Start
@@ -92,6 +90,25 @@ Optional (FlashRAG offline retrieval):
 
 ```bash
 pip install flashrag
+```
+
+#### Server Deployment Guide
+
+See the full deployment steps (LLM + embedding + retriever + evaluation) in `docs/server_deployment.md`.
+
+Minimal quick start (local stack):
+ 
+```bash
+# Start LLM
+python -m sglang.launch_server --model-path Qwen/Qwen3-8B --host 0.0.0.0 --port 30000 --dtype bfloat16 &
+# Start embedding server
+python -m sglang.launch_server --model-path Qwen/Qwen3-Embedding-4B --is-embedding --host 0.0.0.0 --port 8000 --dtype bfloat16 &
+# Start retriever
+python -m state_aware_rag.servers.retriever --config configs/servers/retriever-Qwen3-4B-wiki-23.yaml --port 5000 --workers 2 --mmap_index &
+# Inference
+python -m inference mode=mcts question="Who wrote the novel Dune?" \
+  agents.generator=configs/generator.yaml agents.extractor=configs/extractor.yaml \
+  agents.evaluator=configs/evaluator.yaml agents.retriever=configs/retriever.yaml
 ```
 
 ### 2. Minimal Single-Question Inference
@@ -244,10 +261,8 @@ Available metrics:
 - F1 (token overlap)
 - Exact Match (EM)
 - Sub Exact Match (Sub-EM; partial multi-answer coverage)
-- Retrieval Recall
 - LLM Judge (configurable judging model)
 
-Evaluation annotates dataset with per-sample details (e.g. `f1_detail`, `llm_judge_detail`).
 
 ---
 Directory Structure (selected)
@@ -296,8 +311,6 @@ Troubleshooting
 | Cache not updating | Prompt or params changed but same hash path reused | Manually clear `cache/<role>/<model>` |
 | MCTS very slow | Large `num_rollouts` * `max_depth` | Reduce both; enable `verbose=false` |
 | OOM / rate errors | Concurrency too high | Lower `num_workers` & `concurrency` |
-| Missing metric columns | Evaluation run before inference or wrong path | Point `to_eval_path` to saved dataset |
-| Unicode / formatting mismatch | Preprocessing differences | Use `simple_preprocess` for normalization |
 
 Logging: set `LOGGING_LEVEL=INFO` (default) or adjust per run.
 
@@ -343,12 +356,7 @@ A: No. They are optional and only used when `use_golden_answer` is true (e.g., s
 ---
 Support
 -------
-Please open an issue for bugs or feature requests. Include:
-
-- Config overrides used
-- Console logs (trim secrets)
-- Dataset name / sample
+Please open an issue for bugs or feature requests.
 
 ---
 Happy reasoning!
-

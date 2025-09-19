@@ -71,7 +71,7 @@ _set_logging_warning()
 
 def compute_metrics(data: datasets.Dataset, metrics: List[str]=['all'], dataset_name: str = "default", **kwargs):
     if 'all' in metrics:
-        metrics = ['f1', 'em', 'sub_em', 'retrieval_recall', 'llm_judge']
+        metrics = ['sub_em', 'llm_judge']
     results = {}
     metric_config = {
         'dataset_name': dataset_name,

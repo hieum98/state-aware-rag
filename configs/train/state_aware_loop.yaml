@@ -1,0 +1,5 @@
+- name: state_aware
+  __target__: agents.stage_aware_loop.StageAwareLoop
+  retrieval_config_path: configs/retriever.yaml
+  generator_config_path: configs/generator.yaml
+  evaluator_config_path: configs/evaluator.yaml

@@ -1,0 +1,16 @@
+# LLMAgentArguments 
+model_name: "openai/qwen3-8B"
+url: "http://n0998:30000/v1"
+api_key: "Your-API-Key-Here"
+client_type: "openai"
+concurrency: 64
+
+# GenerationArguments
+temperature: 0.1
+n: 1
+top_p: 0.9
+max_tokens: 4096
+top_k: 20
+use_cache: true
+cache_dir: "mcts_cache/evaluator"
+

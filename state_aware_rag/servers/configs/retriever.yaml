@@ -1,0 +1,10 @@
+# You must make sure that the model and the index are compatible.
+# Run
+# vllm serve intfloat/e5-base-v2 # to start the encoder server.
+# Get the node IP address and replace it in the following settings.
+encoder_model_base_url: http://ip-10-4-242-151:8000/v1
+encoder_model_api_key: YOUR_OPENAI_API_KEY
+encoder_name: e5
+# Path settings
+corpus_path: data/wiki18_100w.jsonl
+index_path: data/e5_flat_inner.index

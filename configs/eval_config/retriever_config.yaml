@@ -1,0 +1,4 @@
+# Retriever configuration for evaluation
+url: "http://n0998:5000/search"
+retrieval_topk: 5
+query_instruction: "query: "

@@ -1,6 +1,0 @@
-
-max_depth: 7
-num_rollouts: 15
-use_golden_answer: false
-save_tree: True
-save_dir: "mcts_data"

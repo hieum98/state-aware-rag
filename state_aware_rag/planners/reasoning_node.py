@@ -292,7 +292,7 @@ class ReasoningNode(NodeMixin):
         if not response:
             logger.warning(f"No exploration output from generator for question: {question}")
             return None
-        queries = [question]
+        queries = []
         for item in response:
             if item.queries:
                 queries.extend(item.queries)
@@ -316,40 +316,36 @@ class ReasoningNode(NodeMixin):
             return None
         logger.info(f"Retrieved {len(retrieval_docs)} documents for queries: {queries}")
         
-        # Filter and consolidate
+        # Filter and consolidate - BATCHED extraction for all documents at once
         base_meta_info = {
             'user_question': self.node_config.get("user_question", ""),
             'question_id': self.node_config.get("question_id", ""),
             'depth': self.depth,
             'question': question,
         }
-        tasks = []
-        all_instance_ids = []
-        for doc in retrieval_docs:
-            meta_info = {**base_meta_info, 'document': doc}
-            agent_input = {
-                'question': question,
-                'document': doc,
-                'run_kwargs': {
-                    'additional_info': meta_info,
-                }
+        # Prepare batched input: list of questions (same question repeated) and list of documents
+        questions_batch = [question] * len(retrieval_docs)
+        documents_batch = retrieval_docs
+        additional_info_batch = [{**base_meta_info, 'document': doc} for doc in retrieval_docs]
+        
+        agent_input = {
+            'question': questions_batch,
+            'document': documents_batch,
+            'run_kwargs': {
+                'additional_info': additional_info_batch,
             }
-            instance_id, _ = await self.extractor.create()
-            tasks.append(self.extractor.execute(instance_id, agent_input))
-            all_instance_ids.append(instance_id)
-        responses = await asyncio.gather(*tasks)
-        for instance_id in all_instance_ids:
-            await self.extractor.release(instance_id)
-        information = []
-        if not responses:
+        }
+        instance_id, _ = await self.extractor.create()
+        response, _, _ = await self.extractor.execute(instance_id, agent_input)
+        await self.extractor.release(instance_id)
+        
+        extracted_info_list: Optional[List[extract.ExtractOutput]] = response.get('extracted_info', None)
+        if not extracted_info_list:
             logger.warning(f"No exploration output from extractor for question: {question} at depth {self.depth}")
             return None
-        for resp in responses:
-            resp, _, _ = resp
-            resp: Optional[List[extract.ExtractOutput]] = resp.get('extracted_info', None)
-            if not resp:
-                continue
-            resp: extract.ExtractOutput = resp[0]
+        
+        information = []
+        for resp in extracted_info_list:
             logger.info(f"Exploration output: {resp}")
             if resp.decision == 'relevant':
                 extracted_info = list(set(resp.information))
@@ -551,8 +547,11 @@ class ReasoningNode(NodeMixin):
         if not sub_question or not sub_question.strip():
             logger.warning(f"Empty rephrased question for subQA generation at depth {self.depth}")
             return None, None
-        reflection = await self.reflect(sub_question)
-        exploration = await self.explore(sub_question)
+        # Run reflect and explore in parallel to reduce latency
+        reflection, exploration = await asyncio.gather(
+            self.reflect(sub_question),
+            self.explore(sub_question)
+        )
         reflection_str = format_memory(reflection) if reflection else ""
         exploration_str = format_memory(exploration) if exploration else ""
         important_info = format_context(memory=reflection_str, reasoning_trace=reasoning_trace, explored_data=exploration_str)
@@ -707,9 +706,12 @@ class ReasoningNode(NodeMixin):
         if not sub_answer or not sub_answer.strip():
             sub_answer = "Not available"
         current_step_objective = f"Verify and improve the answer to the sub-question: {sub_question}"
-        reflexion = await self.reflect(current_step_objective)
+        # Run reflect and explore in parallel to reduce latency
+        reflexion, explored_info = await asyncio.gather(
+            self.reflect(current_step_objective),
+            self.explore(current_step_objective)
+        )
         reflexion_str = format_memory(reflexion) if reflexion else ""
-        explored_info = await self.explore(current_step_objective)
         exploration_str = format_memory(explored_info) if explored_info else ""
         important_info = format_context(memory=reflexion_str, explored_data=exploration_str)
         logger.info(f"Generating self-corrected reasoning for sub-question: {sub_question} at depth {self.depth}")

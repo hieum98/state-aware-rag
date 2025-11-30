@@ -79,7 +79,7 @@ class ModelClient:
             if response is None or not hasattr(response, 'choices') or not response.choices:
                 attempts += 1
                 # slightly adjust params to shake the sampler
-                model_kwargs['top_k'] = model_kwargs.get('top_k', 20) + 2 # Increase top_k to encourage more diverse sampling
+                # model_kwargs['top_k'] = model_kwargs.get('top_k', 20) + 2 # Increase top_k to encourage more diverse sampling
                 # Nudge top_p upward but never exceed 1.0
                 model_kwargs['top_p'] = min(model_kwargs.get('top_p', 0.8) + 0.02, 1.0)
                 if 'claude' not in self.model_name and self.reasoning_effort is None:
@@ -166,7 +166,7 @@ class LiteLLMClient(ModelClient):
             'max_tokens': kwargs.get('max_tokens', self.max_tokens),
             'top_p': kwargs.get('top_p', self.top_p) if reasoning_effort is None else None,
             'n': kwargs.get('n', self.num_samples),
-            'top_k': kwargs.get('top_k', self.top_k) if reasoning_effort is None else None,
+            # 'top_k': kwargs.get('top_k', self.top_k) if reasoning_effort is None else None,
             'api_key': self.api_key,
             'base_url': self.url,
             'response_format': output_schema,
@@ -223,7 +223,7 @@ class OpenAIClient(ModelClient):
             'seed': kwargs.get('random_seed', self.random_seed),
             'response_format': response_format,
             'extra_body': {
-                "top_k": kwargs.get('top_k', self.top_k),
+                # "top_k": kwargs.get('top_k', self.top_k),
                 "chat_template_kwargs": {"enable_thinking": True if reasoning_effort else None},
             }
         }
@@ -398,4 +398,30 @@ class LLMAgent:
         if len(batch_results) == 1:
             return batch_results[0]
         return [ (x[0] if x else {}) for x in batch_results ]
+    
+
+if __name__ == "__main__":
+    # Example usage
+    client_kwargs = {
+        'model_name': 'Qwen/Qwen3-8B',
+        'url': 'http://localhost:30000/v1',
+        'api_key': 'Your-API-Key-Here',
+        'client_type': 'openai',
+        'concurrency': 8,
+    }
+
+    generate_kwargs = {
+        'temperature': 0.7,
+        'top_p': 0.9,
+        'max_tokens': 1024,
+        'n': 2,
+    }
+
+    llm_agent = LLMAgent(client_kwargs, generate_kwargs)
+    messages = [
+        {'role': 'system', 'content': 'You are a helpful assistant.'},
+        {'role': 'user', 'content': 'What is the capital of France?'},
+    ]
+    responses = llm_agent.batch_generate([messages], output_schema=None)
+    print(responses)
             

@@ -176,8 +176,10 @@ def load_resources(config, mmap_index=False):
     elif corpus_path.endswith('.parquet'):
         corpus_local = datasets.load_dataset('parquet', data_files=corpus_path, split='train')
         corpus_local = corpus_local.cast_column('image', datasets.Image())
-    else:
+    elif os.path.exists(corpus_path):
         corpus_local = datasets.load_from_disk(corpus_path)
+    else:
+        corpus_local = datasets.load_dataset(corpus_path, split='train')
 
     # FAISS index
     index_flags = 0

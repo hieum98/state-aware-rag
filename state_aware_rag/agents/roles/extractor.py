@@ -59,20 +59,56 @@ class Extractor(LLMAgent):
         kwargs['output_schema'] = extract.ExtractOutput
         kwargs['any_other_info'] = addtional_info
         responses = self.role_execute(batch, **kwargs)
+        
+        # Handle batch vs single response format from role_execute
+        # role_execute returns: batch_results[0] if len==1, else [(x[0] if x else {}) for x in batch_results]
+        is_batch_mode = len(question) > 1
+        
         extracted_info: List[extract.ExtractOutput] = []
-        for response in responses:
-            decision = response['decision']
-            decision = decision if decision == 'relevant' else 'not_relevant'
-            if isinstance(response['information'], list):
-                info = response['information']
-            else:
-                info = [str(response['information'])]
-            output = extract.ExtractOutput(
-                information=info,
-                decision=decision,
-                reasoning=response.get('reasoning', '')
-            )
-            extracted_info.append(output)
+        if is_batch_mode:
+            # In batch mode, responses is a list with one dict per question
+            for response in responses:
+                if not response or not isinstance(response, dict):
+                    # Create a default not_relevant output for missing responses
+                    output = extract.ExtractOutput(
+                        information=[],
+                        decision='not_relevant',
+                        reasoning=''
+                    )
+                    extracted_info.append(output)
+                    continue
+                decision = response.get('decision', 'not_relevant')
+                decision = decision if decision == 'relevant' else 'not_relevant'
+                info_raw = response.get('information', [])
+                if isinstance(info_raw, list):
+                    info = info_raw
+                else:
+                    info = [str(info_raw)] if info_raw else []
+                output = extract.ExtractOutput(
+                    information=info,
+                    decision=decision,
+                    reasoning=response.get('reasoning', '')
+                )
+                extracted_info.append(output)
+        else:
+            # Single question mode - responses is a list of dicts (multiple samples for one question)
+            for response in responses:
+                if not response or not isinstance(response, dict):
+                    continue
+                decision = response.get('decision', 'not_relevant')
+                decision = decision if decision == 'relevant' else 'not_relevant'
+                info_raw = response.get('information', [])
+                if isinstance(info_raw, list):
+                    info = info_raw
+                else:
+                    info = [str(info_raw)] if info_raw else []
+                output = extract.ExtractOutput(
+                    information=info,
+                    decision=decision,
+                    reasoning=response.get('reasoning', '')
+                )
+                extracted_info.append(output)
+        
         if len(question) == 1 and len(extracted_info) > 1:
             # Collect decisions from pydantic models
             decision = [item.decision for item in extracted_info]

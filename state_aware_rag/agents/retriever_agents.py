@@ -227,11 +227,94 @@ class APIRetrieverAgent:
         }
 
 
+class GoogleSearchAgent:
+    serper_api_key: str = os.getenv("SERPER_API_KEY", "your_serper_api_key")
+
+    def _search(self, query: str, top_k: int = 5, return_score: bool = False, **kwargs):
+        """Perform a Google search and return the top results.
+
+        Args:
+            query (str): The search query.
+            top_k (int, optional): Number of search results to return. Defaults to 5.
+            return_score (bool, optional): Whether to return scores. Defaults to False.
+        Returns:
+            dict: A dictionary containing retrieved documents matching APIRetrieverAgent format.
+        """
+        from state_aware_rag.utils.web_search import WebSearchTool
+        web_search_tool = WebSearchTool(serper_api_key=self.serper_api_key)
+
+        results = None
+        for i in range(3):  # Retry up to 3 times
+            try:
+                search_output = web_search_tool.invoke({
+                    "query": query,
+                    "top_k": top_k
+                })
+                if search_output.is_success:
+                    results = search_output.results
+                    break
+            except Exception as e:
+                logger.error(f"Web search attempt {i+1} failed for query '{query}': {e}")
+                time.sleep(2)  # Wait before retrying
+        if results is None:
+            return {
+                "retrieved_docs": [],
+                "scores": [] if return_score else None,
+            }
+        return {
+            "retrieved_docs": [
+                {
+                    "id": None,
+                    "url": item.link,
+                    "title": item.title,
+                    "contents": f"{item.title}\n{item.snippet}\n{item.full_text}"
+                }
+                for item in results
+            ],
+            "scores": [1.0] * len(results) if return_score else None,
+        }
+    
+    def search(self, query: Union[str, List[str]], top_k: int = 5, return_score: bool = False, instruction: str = None, **kwargs):
+        """Search for the top-k relevant documents for a given query.
+
+        Args:
+            query (Union[str, List[str]]): The query or list of queries to search for.
+            top_k (int, optional): Number of top documents to retrieve. Defaults to 5.
+            return_score (bool, optional): Whether to return scores. Defaults to False.
+            instruction (str, optional): Instruction (ignored for Google search). Defaults to None.
+        Returns:
+            dict: A dictionary containing the retrieved documents matching APIRetrieverAgent format.
+        """
+        begin_time = time.time()
+        if isinstance(query, str):
+            result = self._search(query, top_k=top_k, return_score=return_score, **kwargs)
+            result["response_time"] = time.time() - begin_time
+            return result
+        elif isinstance(query, list):
+            all_retrieved_docs = []
+            all_scores = [] if return_score else None
+            for q in query:
+                result = self._search(q, top_k=top_k, return_score=return_score, **kwargs)
+                all_retrieved_docs.append(result["retrieved_docs"])
+                if return_score:
+                    all_scores.append(result["scores"])
+            return {
+                "retrieved_docs": all_retrieved_docs,
+                "scores": all_scores,
+                "response_time": time.time() - begin_time
+            }
+        else:
+            raise ValueError("Query must be a string or a list of strings.")
+
 class RetrieverAgent:
     def __init__(self, offline_kwargs=None, online_kwargs=None):
         assert offline_kwargs is not None or online_kwargs is not None, "Either offline_kwargs or online_kwargs must be provided"
         if online_kwargs is not None:
-            self.agent = APIRetrieverAgent(**online_kwargs)
+            if online_kwargs.get('is_google_search', False):
+                self.agent = GoogleSearchAgent()
+                self.agent.serper_api_key = online_kwargs.get('serper_api_key', os.getenv("SERPER_API_KEY", "your_serper_api_key"))
+            else:
+                self.agent = APIRetrieverAgent(**online_kwargs)
         else:
             # self.agent = FlashRAGRetrieverAgent(**offline_kwargs)
             raise NotImplementedError("Offline retriever agent is not implemented yet. Please use online_kwargs for API-based retrieval.")
@@ -252,18 +335,42 @@ class RetrieverAgent:
 
 if __name__ == "__main__":
     retriever_online_kwargs = {
-        "url": "http://ip-10-4-230-228:5000/search",
+        "url": "http://n0998:5000/search",
         "retrieval_topk": 64,
         "query_instruction": None,
+        'is_google_search': False,
+        'serper_api_key': ''
     }
     retriever_agent = RetrieverAgent(online_kwargs=retriever_online_kwargs)
 
-    query = "A Day of Fury is a 1956 American Western film directed by Harmon Jones and starring Dale Robertson, Mara Corday and Jock Mahoney. The working title of the film was Jagade, the name of Robertson's character."
-    # query = "Where was Ning Hao born?"
-    # query = "When was the Declaration of Independence signed?"
-    results = retriever_agent.search(query, top_k=10, instruction=None)
-    # check if 'A Day Of Fury' is in the results
+    # Test 1: Single query
+    print("=== Test 1: Single Query ===")
+    query = "Where was the director of the film 'Breakup Buddies' born?"
+    results = retriever_agent.search(query, top_k=3, return_score=True)
+    print(f"Keys: {results.keys()}")
+    print(f"Number of docs: {len(results['retrieved_docs'])}")
+    print(f"Scores: {results['scores']}")
+    print(f"Response time: {results.get('response_time', 'N/A'):.2f}s")
     breakpoint()
-    for item in (results['retrieved_docs'] if isinstance(results['retrieved_docs'], list) else []):
-        if isinstance(item, dict) and '1956' in item.get('contents', ''):
-            breakpoint()
+    
+    # Test 2: Batch query
+    print("\n=== Test 2: Batch Query ===")
+    queries = [
+        "Where was the director of the film 'Breakup Buddies' born?",
+        "What is the capital of France?"
+    ]
+    results = retriever_agent.search(queries, top_k=2, return_score=True)
+    print(f"Keys: {results.keys()}")
+    print(f"Number of query results: {len(results['retrieved_docs'])}")
+    for i, docs in enumerate(results['retrieved_docs']):
+        print(f"  Query {i+1}: {len(docs)} docs retrieved")
+    print(f"Scores structure: {type(results['scores'])}, len={len(results['scores']) if results['scores'] else 0}")
+    print(f"Response time: {results.get('response_time', 'N/A'):.2f}s")
+    
+    # Test 3: Without scores
+    print("\n=== Test 3: Without Scores ===")
+    results = retriever_agent.search(query, top_k=2, return_score=False)
+    print(f"Keys: {results.keys()}")
+    print(f"Scores (should be None): {results['scores']}")
+    
+    print("\n=== All tests passed! ===")

@@ -22,6 +22,8 @@ Table of Contents
 
 - Features
 - LangGraph Port (`langgraph_sar`)
+  - Hydra CLI (`python -m langgraph_sar.inference`)
+  - `eval_mode` (judge_only vs teacher_forced)
 - Architecture Overview
 - Quick Start (legacy)
   - Environment
@@ -76,6 +78,58 @@ Configure in `langgraph_sar/config.yaml` (tiers, endpoints, `search.*`, `memory.
 3. **FAISS corpus** — full wiki index at `data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss`
 4. **API key** — `export API_KEY=EMPTY` (or your SGLang key) for Qwen tiers; evaluator defaults to the same local endpoint as the generator.
 
+### Hydra CLI (`python -m langgraph_sar.inference`)
+
+Mirrors legacy `python -m inference`: Hydra config at `configs/infer_langgraph/base.yaml`, model tiers and corpus in `langgraph_sar/config.yaml` (override with `sar_config=/path/to.yaml`).
+
+```bash
+# Single question
+python -m langgraph_sar.inference \
+  question="Who founded the company that created the iPhone?"
+
+# Dataset batch (same dataset names as legacy infer)
+python -m langgraph_sar.inference \
+  strategy=mcts \
+  data.name=2wiki \
+  data.limit=32 \
+  max_workers=4 \
+  search.max_depth=6 \
+  search.num_rollouts=8
+
+# Legacy planner alias: mode=cot → strategy=socratic
+python -m langgraph_sar.inference mode=cot data.limit=10
+```
+
+| Override | Meaning |
+|----------|---------|
+| `strategy` | `socratic` or `mcts` (default: `socratic`) |
+| `mode` | Optional alias: `cot` → `socratic`, `mcts` → `mcts` |
+| `sar_config` | Path to SAR YAML; default `langgraph_sar/config.yaml` |
+| `search.*` | Merged into `SARConfig.search` (depth, rollouts, `top_k`, …) |
+| `max_workers` | Async concurrency per batch (default: 4) |
+| `batch_size` | Records per `answer_records_batch` chunk (default: 32) |
+| `eval_mode` | `judge_only` (default) or `teacher_forced` — see below |
+| `golden_answer` | Optional reference for single-question runs |
+
+Results are saved as a Hugging Face dataset under:
+
+```text
+results/<strategy>/Generator_<model>/Extractor_<model>/Evaluator_<model>/<dataset>/
+```
+
+Like legacy `inference.py`, if `question` is set the CLI prints one answer and still runs the configured dataset pass.
+
+### `eval_mode`
+
+Controls how **golden answers** interact with the run and whether rows count toward benchmark metrics:
+
+| Value | Use |
+|-------|-----|
+| **`judge_only`** (default) | Reference answer is for **outcome reward** (`OUTCOME_JUDGE` / \(R_o\)) and metrics only. It is passed via LangGraph `config.configurable`, not generator/extractor prompts (leak-safe eval). |
+| **`teacher_forced`** | Intended for **SFT / trajectory synthesis** where gold may steer the loop. Rows are tagged and **excluded** from aggregated metrics (`filter_records_for_metrics`). |
+
+Set globally: `eval_mode=judge_only`. Per record in batch API: `"eval_mode": "judge_only"` on each row.
+
 ### Single-question inference (Python API)
 
 ```python
@@ -124,12 +178,14 @@ High-level loop per question:
 
 Key files:
 
-- `inference.py` – main entry (single question or dataset map)
+- `inference.py` – legacy Hydra entry (single question or dataset map)
+- `langgraph_sar/inference.py` – LangGraph Hydra entry (`python -m langgraph_sar.inference`)
 - `evaluate.py` – metric computation and judged scoring
 - `state_aware_rag/agents/` – agent abstractions & role implementations
 - `state_aware_rag/planners/` – search logic (`MCTS` and `CoT`)
-- `configs/infer/` – Hydra configs for experiments
-- `cache/` – per-model LLM call cache
+- `configs/infer/` – Hydra configs (legacy)
+- `configs/infer_langgraph/` – Hydra configs (LangGraph port)
+- `cache/` – per-model LLM call cache (legacy)
 
 Each node logs: node type, memory snapshot, confidence, content (sub-question, answer, synthesis, final answer), plus lineage. Trees can be reloaded to continue or analyze.
 
@@ -226,29 +282,30 @@ Creates `<results_path>_with_scores` with metric annotations + `evaluation_resul
 Configuration System
 --------------------
 
-Hydra config tree (simplified):
+Hydra config trees (simplified):
+
+**Legacy** — `configs/infer/base.yaml`:
 
 ```text
-configs/infer/base.yaml
   ├─ mode: mcts | cot
   ├─ results_dir: results
   ├─ num_proc: <int>
-  ├─ agents:
-  │   ├─ generator: (inline dict or path to YAML)
-  │   ├─ extractor:
-  │   ├─ evaluator:
-  │   └─ retriever:
-  ├─ search:
-  │   ├─ max_depth
-  │   ├─ num_rollouts
-  │   ├─ exploration_weight
-  │   ├─ top_k
-  │   ├─ save_tree
-  │   └─ verbose
-  └─ data:
-      ├─ name (2wiki | hotpotqa | musique | ...)
-      ├─ split
-      └─ limit
+  ├─ agents: generator | extractor | evaluator | retriever (YAML paths)
+  ├─ search: max_depth, num_rollouts, exploration_weight, top_k, save_tree, ...
+  └─ data: name, split, limit
+```
+
+**LangGraph port** — `configs/infer_langgraph/base.yaml` + `langgraph_sar/config.yaml`:
+
+```text
+infer_langgraph/base.yaml          langgraph_sar/config.yaml
+  ├─ strategy: socratic | mcts       ├─ llm.tiers (generator / extractor / evaluator)
+  ├─ mode: (alias for strategy)     ├─ search.* (defaults; overridable from CLI)
+  ├─ sar_config: null               ├─ retriever.corpus.index_path
+  ├─ max_workers, batch_size         └─ memory.*, web_search.*
+  ├─ eval_mode: judge_only | teacher_forced
+  ├─ search: (CLI overrides)
+  └─ data: name, split, limit
 ```
 
 Each agent YAML defines:
@@ -334,17 +391,20 @@ Directory Structure (selected)
 ------------------------------
 
 ```text
-inference.py            # Legacy inference entry (Hydra)
-evaluate.py             # Metrics (shared by legacy + langgraph_sar batch glue)
-langgraph_sar/          # LangGraph port (config, graphs, system.py, tests/)
-  system.py             # answer_question / batch / metric filtering
-  config.yaml           # Default SGLang endpoints & search knobs
-  scripts/smoke_live.py # Live end-to-end smoke test
-configs/                # Hydra configs (legacy)
-state_aware_rag/        # Legacy agents & planners (training reference)
-results/                # Saved HF datasets of predictions
-cache/                  # Legacy LLM response caches
-scripts/                # Deploy / eval shell helpers
+inference.py                  # Legacy inference entry (Hydra)
+langgraph_sar/
+  inference.py                # LangGraph inference entry (Hydra)
+  system.py                   # answer_question / batch / metric filtering
+  config.yaml                 # Default SGLang endpoints & search knobs
+  scripts/smoke_live.py       # Live end-to-end smoke test
+evaluate.py                   # Metrics (shared by legacy + langgraph_sar batch glue)
+configs/
+  infer/                      # Hydra — legacy stack
+  infer_langgraph/            # Hydra — LangGraph port
+state_aware_rag/              # Legacy agents & planners (training reference)
+results/                      # Saved HF datasets of predictions
+cache/                        # Legacy LLM response caches
+scripts/                      # Deploy / eval shell helpers
 ```
 
 ---
@@ -418,7 +478,10 @@ Q: How do I change the model for the Generator only?
 A: Point `agents.generator` to a different YAML or override `agents.generator.client_kwargs.model_name=...`.
 
 Q: Do I need golden answers?  
-A: No. They are optional and only used when `use_golden_answer` is true (e.g., supervision / debugging modes).
+A: No for serving. In the **legacy** stack, gold is optional and gated by `search.use_golden_answer`. In the **LangGraph** port, gold feeds outcome reward when provided; with `eval_mode=judge_only` (default) it never enters generator/extractor prompts.
+
+Q: What is `eval_mode` on the LangGraph CLI?  
+A: `judge_only` (default) = reference for judges/metrics only. `teacher_forced` = synthesis runs excluded from reported metrics; graph branching for teacher forcing is not fully implemented yet.
 
 ---
 Support

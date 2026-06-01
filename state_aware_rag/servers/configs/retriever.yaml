@@ -2,9 +2,9 @@
 # Run
 # vllm serve intfloat/e5-base-v2 # to start the encoder server.
 # Get the node IP address and replace it in the following settings.
-encoder_model_base_url: http://ip-10-4-242-151:8000/v1
+encoder_model_base_url: http://n0998:8000/v1
 encoder_model_api_key: YOUR_OPENAI_API_KEY
-encoder_name: e5
+encoder_name: qwen3
 # Path settings
-corpus_path: data/wiki18_100w.jsonl
-index_path: data/e5_flat_inner.index
+corpus_path: Hieuman/wiki23-processed
+index_path: data/Qwen3-4B-Emb-index.faiss

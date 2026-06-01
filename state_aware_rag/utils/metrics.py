@@ -551,8 +551,12 @@ class LLMJudge(BaseMetric):
             for x in responses:
                 if x is None:
                     x = 0
+                try:
+                    score_with_golden = float(x)
+                except:
+                    score_with_golden = 0.0
                 judge_list.append({
-                    'score_with_golden': float(x),
+                    'score_with_golden': score_with_golden,
                     'score_without_golden': 0.0,
                 })
             # Sleep to avoid rate limit

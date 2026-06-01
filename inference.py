@@ -302,7 +302,7 @@ def main(cfg: DictConfig):
         num_proc=num_proc,
         desc="inference",
     )
-
+    print("Inference completed.")
     ds.save_to_disk(results_dir)
     print(f"Results saved to {results_dir}")
 

@@ -1,21 +1,7 @@
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name 2wiki &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name 2wiki &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name hotpotqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name hotpotqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name musique &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name musique &&
+python inference.py search.max_depth=3 results_dir=results/mcts/depth_3
 
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name simpleqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name simpleqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name bamboogle &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name bamboogle &&
+python inference.py search.max_depth=5 results_dir=results/mcts/depth_5
 
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name nq &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name nq &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name triviaqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name triviaqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode cot --data-name popqa &&
-sbatch scripts/run_infer_slurm.sh --ext-model Hieuman/Extractor-Qwen3-4B-SFT-v1 --ext-url http://ip-10-4-224-9:30000/v1 --mode mcts --data-name popqa &&
+python inference.py search.max_depth=10 results_dir=results/mcts/depth_10
 
-
-echo "All jobs submitted."
+python inference.py search.max_depth=15 results_dir=results/mcts/depth_15

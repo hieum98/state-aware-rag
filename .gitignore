@@ -20,3 +20,8 @@ state_aware_rag.egg-info
 models/
 checkpoint/
 SLURM_eval/
+__MACOSX/
+result-files/
+result-files.zip
+scripts/eval_3.sh
+scripts/eval_2.sh

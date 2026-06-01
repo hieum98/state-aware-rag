@@ -18,7 +18,7 @@ llm:
     # Frozen generator. Temperature >0 gives MCTS branching entropy; do not add response caching.
     generator:
       model_name: openai/Qwen/Qwen3-8B
-      api_base: http://localhost:30172/v1
+      api_base: http://n0172:30000/v1
       api_key: null
       temperature: 0.7
       max_tokens: 8192
@@ -32,7 +32,7 @@ llm:
     # TRAINABLE extractor. Swap model_name/api_base to the RL Qwen3-4B checkpoint here, no graph edits.
     extractor:
       model_name: openai/Qwen/Qwen3-8B
-      api_base: http://localhost:30172/v1
+      api_base: http://n0172:30000/v1
       api_key: null
       temperature: 0.2
       max_tokens: 4096
@@ -47,7 +47,7 @@ llm:
     # Set api_base: null and a provider model_name (e.g. claude-*) for cloud judges.
     evaluator:
       model_name: openai/Qwen/Qwen3-8B
-      api_base: http://localhost:30172/v1
+      api_base: http://n0172:30000/v1
       api_key: null
       temperature: 0.0
       max_tokens: 8192
@@ -126,7 +126,7 @@ retriever:
     text_column: contents
     embedder:
       model_name: Qwen/Qwen3-Embedding-4B
-      url: http://localhost:30164/v1
+      url: http://n0164:30000/v1
       api_key: null
 
 # Optional web tool (paper "+Google Search" variant). Off for corpus-only parity.

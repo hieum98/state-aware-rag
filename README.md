@@ -79,8 +79,7 @@ Configure in `langgraph_sar/config.yaml` (tiers, endpoints, `search.*`, `memory.
 4. **API key** — `export API_KEY=EMPTY` (or your SGLang key) for Qwen tiers; evaluator defaults to the same local endpoint as the generator.
 
 ### Hydra CLI (`python -m langgraph_sar.inference`)
-
-Mirrors legacy `python -m inference`: Hydra config at `configs/infer_langgraph/base.yaml`, model tiers and corpus in `langgraph_sar/config.yaml` (override with `sar_config=/path/to.yaml`).
+Hydra config at `configs/infer_langgraph/base.yaml`, model tiers and corpus in `langgraph_sar/config.yaml` (override with `sar_config=/path/to.yaml`).
 
 ```bash
 # Single question

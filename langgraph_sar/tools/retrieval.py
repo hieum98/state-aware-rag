@@ -20,10 +20,54 @@ from typing import Any, List, Optional
 from langchain_community.docstore.base import Docstore
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from langchain_core.tools import tool
 from langchain_openai import OpenAIEmbeddings
 
-from ..config import RetrieverConfig
+from ..config import EmbedderConfig, RetrieverConfig
+
+
+class _Qwen3QueryEmbeddings(Embeddings):
+    """Query-side embeddings for the asymmetric Qwen3-Embedding retriever.
+
+    Two corrections over a bare ``OpenAIEmbeddings``, both required to match how the
+    corpus was indexed by ``state_aware_rag/servers/build_index.py``:
+
+    * **Send raw text, not token ids.** ``OpenAIEmbeddings`` defaults to
+      ``check_embedding_ctx_length=True``, which tiktoken-encodes the input and posts
+      *integer token ids* (OpenAI cl100k vocab). SGLang re-reads those ids in Qwen's
+      own vocab, so the query vector is meaningless and the search returns the same hub
+      passages (Braille/Plackett-Burman) for every query. We force the raw-text path.
+    * **Apply the query instruction.** Qwen3-Embedding expects queries (not passages) to
+      carry an ``Instruct: …\\nQuery: …`` prefix. Passages were indexed raw, so only the
+      query path wraps; ``embed_documents`` is left untouched for symmetry/tests.
+    """
+
+    def __init__(self, emb_cfg: EmbedderConfig) -> None:
+        self._inner = OpenAIEmbeddings(
+            model=emb_cfg.model_name,
+            base_url=emb_cfg.url,
+            api_key=emb_cfg.api_key or "EMPTY",
+            check_embedding_ctx_length=False,
+        )
+        self._instruction = emb_cfg.query_instruction or ""
+
+    def _wrap(self, text: str) -> str:
+        if self._instruction and "{query}" in self._instruction:
+            return self._instruction.format(query=text)
+        return text
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._inner.embed_documents(texts)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._inner.embed_query(self._wrap(text))
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        return await self._inner.aembed_documents(texts)
+
+    async def aembed_query(self, text: str) -> List[float]:
+        return await self._inner.aembed_query(self._wrap(text))
 
 
 def get_corpus_retriever(retriever_cfg: RetrieverConfig):
@@ -42,11 +86,7 @@ def get_corpus_retriever(retriever_cfg: RetrieverConfig):
     corpus = retriever_cfg.corpus
     emb_cfg = corpus.embedder
 
-    embeddings = OpenAIEmbeddings(
-        model=emb_cfg.model_name,
-        base_url=emb_cfg.url,
-        api_key=emb_cfg.api_key or "EMPTY",
-    )
+    embeddings = _Qwen3QueryEmbeddings(emb_cfg)
 
     index_path = os.environ.get("SAR_CORPUS_INDEX_PATH", corpus.index_path)
     if not os.path.exists(index_path):

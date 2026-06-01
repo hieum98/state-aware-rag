@@ -21,7 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from .config import SARConfig
-from .system import answer_question, answer_records_batch
+from .system import answer_question, answer_question_streaming, answer_records_batch
 
 _STRATEGY_ALIASES = {"cot": "socratic", "socratic": "socratic", "mcts": "mcts"}
 
@@ -109,12 +109,22 @@ async def _run_single_question(
     *,
     eval_mode: str,
 ) -> None:
-    result = await answer_question(
-        str(cfg.question),
-        config=sar,
-        golden_answer=cfg.get("golden_answer"),
-        eval_mode=eval_mode,
-    )
+    if bool(cfg.get("stream", False)):
+        print(f"Streaming {sar.search.strategy!r} steps for: {cfg.question}")
+        result = await answer_question_streaming(
+            str(cfg.question),
+            config=sar,
+            golden_answer=cfg.get("golden_answer"),
+            eval_mode=eval_mode,
+            on_step=lambda msg: print(f"  {msg}", flush=True),
+        )
+    else:
+        result = await answer_question(
+            str(cfg.question),
+            config=sar,
+            golden_answer=cfg.get("golden_answer"),
+            eval_mode=eval_mode,
+        )
     print("Final Answer:", result.pred)
     print("Final Reasoning:", result.detailed_answer)
 

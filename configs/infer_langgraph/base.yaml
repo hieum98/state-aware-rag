@@ -13,6 +13,10 @@ question: null
 golden_answer: null
 eval_mode: judge_only
 
+# Print per-step graph progress for single-question runs (question=...). Dataset/batch
+# runs ignore this and use ainvoke for throughput.
+stream: true
+
 # Async concurrency for answer_records_batch (replaces legacy num_proc).
 max_workers: 4
 batch_size: 32

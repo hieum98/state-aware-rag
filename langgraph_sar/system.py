@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .config import SARConfig
 from .graphs.mcts import build_mcts_graph
@@ -177,14 +177,18 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
-async def answer_question(
+def _prepare_run(
     question: str,
     *,
-    config: Optional[SARConfig] = None,
-    golden_answer: Optional[Union[str, Sequence[str]]] = None,
-    eval_mode: str = "judge_only",
-) -> AnswerResult:
-    """Answer one question via the configured Socratic or MCTS graph."""
+    config: Optional[SARConfig],
+    golden_answer: Optional[Union[str, Sequence[str]]],
+    eval_mode: str,
+) -> Tuple[Any, Dict[str, Any], Dict[str, Any], str]:
+    """Validate inputs, init tools, and build the graph + initial state + run config.
+
+    Shared by :func:`answer_question` (``ainvoke``) and :func:`answer_question_streaming`
+    (``astream``); returns ``(graph, initial_state, run_cfg, strategy)``.
+    """
     cfg = config or SARConfig.from_yaml()
     if eval_mode not in EVAL_MODES:
         raise ValueError(f"Unknown eval_mode {eval_mode!r}; expected one of {EVAL_MODES}")
@@ -212,8 +216,101 @@ async def answer_question(
         graph = build_socratic_graph(registry, cfg)
         initial_state = _initial_socratic_state(question, cfg)
 
+    return graph, initial_state, run_cfg, strategy
+
+
+def format_progress_event(
+    strategy: str, node_name: str, delta: Mapping[str, Any]
+) -> Optional[str]:
+    """Render a one-line progress message for a streamed node update.
+
+    ``delta`` is the partial state the node returned (``stream_mode="updates"``).
+    Returns ``None`` for nodes with nothing user-facing to report.
+    """
+    if strategy == "socratic":
+        if node_name == "gen_subq":
+            if delta.get("is_answerable"):
+                return f"[depth {delta.get('depth')}] main question answerable → concluding"
+            subq = (delta.get("sub_question") or "").strip()
+            return f"[depth {delta.get('depth')}] sub-question: {subq}" if subq else None
+        if node_name == "answer":
+            history = delta.get("iteration_history") or []
+            entry = history[-1] if history else {}
+            return f"[depth {delta.get('depth')}] answer: {entry.get('answer', '')}"
+        if node_name == "conclude":
+            return f"[final] {delta.get('final_answer', '')}"
+        if node_name == "evaluate":
+            return f"[reward] {delta.get('reward')}"
+        return None
+
+    # mcts
+    if node_name == "expand":
+        n = len(delta.get("expanded_node_ids") or [])
+        return f"[expand] +{n} candidate node(s)" if n else None
+    if node_name == "simulate":
+        ans = (delta.get("simulation_result") or {}).get("terminal_answer", "")
+        return f"[rollout] {ans}" if ans else None
+    if node_name == "evaluate":
+        return f"[reward] {delta.get('reward')}"
+    if node_name == "backprop":
+        return (
+            f"[iter {delta.get('iteration')}] best_value={delta.get('best_value')} "
+            f"no_improve={delta.get('iterations_without_improvement')}"
+        )
+    if node_name == "synthesize":
+        return f"[final] {delta.get('final_answer', '')}"
+    return None
+
+
+async def answer_question(
+    question: str,
+    *,
+    config: Optional[SARConfig] = None,
+    golden_answer: Optional[Union[str, Sequence[str]]] = None,
+    eval_mode: str = "judge_only",
+) -> AnswerResult:
+    """Answer one question via the configured Socratic or MCTS graph."""
+    graph, initial_state, run_cfg, strategy = _prepare_run(
+        question, config=config, golden_answer=golden_answer, eval_mode=eval_mode
+    )
     result = await graph.ainvoke(initial_state, config=run_cfg)
     return AnswerResult.from_state(result or {}, strategy=strategy, eval_mode=eval_mode)
+
+
+async def answer_question_streaming(
+    question: str,
+    *,
+    config: Optional[SARConfig] = None,
+    golden_answer: Optional[Union[str, Sequence[str]]] = None,
+    eval_mode: str = "judge_only",
+    on_step: Optional[Callable[[str], None]] = None,
+) -> AnswerResult:
+    """Answer one question, invoking ``on_step`` with a progress line per graph node.
+
+    Uses ``astream(stream_mode=["updates", "values"])``: ``"updates"`` carries each
+    node's delta (for the progress line via :func:`format_progress_event`), while
+    ``"values"`` carries the full accumulated state so the final :class:`AnswerResult`
+    is reconstructed correctly even for reducer-merged channels (e.g. the MCTS ``tree``).
+    """
+    graph, initial_state, run_cfg, strategy = _prepare_run(
+        question, config=config, golden_answer=golden_answer, eval_mode=eval_mode
+    )
+
+    final_state: Dict[str, Any] = dict(initial_state)
+    async for mode, chunk in graph.astream(
+        initial_state, config=run_cfg, stream_mode=["updates", "values"]
+    ):
+        if mode == "values":
+            final_state = chunk
+        elif mode == "updates" and on_step is not None:
+            for node_name, node_delta in chunk.items():
+                if not isinstance(node_delta, Mapping):
+                    continue
+                msg = format_progress_event(strategy, node_name, node_delta)
+                if msg:
+                    on_step(msg)
+
+    return AnswerResult.from_state(final_state, strategy=strategy, eval_mode=eval_mode)
 
 
 async def answer_questions_batch(

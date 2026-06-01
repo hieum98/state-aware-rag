@@ -14,8 +14,10 @@ so this tool returns the FAISS ``search_k`` candidates in score order.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any, List, Optional
 
+from langchain_community.docstore.base import Docstore
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.tools import tool
@@ -72,6 +74,50 @@ def get_corpus_retriever(retriever_cfg: RetrieverConfig):
     return vector_store.as_retriever(search_kwargs={"k": corpus.search_k})
 
 
+class _LazyTextDocstore(Docstore):
+    """Read-only docstore that builds a ``Document`` on demand from a text list.
+
+    FAISS only ever calls :meth:`search` for the handful of top-k hit ids per query,
+    so we hold just the raw ``texts`` (one columnar materialization) and construct the
+    ``Document`` lazily — avoiding N up-front object allocations. Read-only: no ``add``,
+    so this store cannot back ``add_texts``/``merge_from``/``save_local``.
+    """
+
+    def __init__(self, texts: Any) -> None:
+        self._texts = texts
+
+    def search(self, search: str) -> Any:
+        try:
+            i = int(search)
+            text = self._texts[i]
+        except (ValueError, TypeError, IndexError, KeyError):
+            return f"ID {search} not found."
+        return Document(page_content="" if text is None else str(text), metadata={"row": i})
+
+
+class _IdentityStrMapping(Mapping):
+    """``{i: str(i)}`` for ``i in range(n)`` without materializing the dict."""
+
+    def __init__(self, n: int) -> None:
+        self._n = int(n)
+
+    def __getitem__(self, i: int) -> str:
+        # FAISS indexes this with numpy integers, so coerce rather than isinstance-check int.
+        try:
+            idx = int(i)
+        except (TypeError, ValueError):
+            raise KeyError(i)
+        if 0 <= idx < self._n:
+            return str(idx)
+        raise KeyError(i)
+
+    def __iter__(self):
+        return iter(range(self._n))
+
+    def __len__(self) -> int:
+        return self._n
+
+
 def _load_raw_faiss_corpus(index_path: str, embeddings: Any, corpus_cfg: Any) -> FAISS:
     """Wrap a bare HF-datasets FAISS index in a LangChain store via a side corpus.
 
@@ -83,7 +129,6 @@ def _load_raw_faiss_corpus(index_path: str, embeddings: Any, corpus_cfg: Any) ->
     """
     import faiss  # local import: only needed for the raw-index layout
     import datasets
-    from langchain_community.docstore.in_memory import InMemoryDocstore
     from langchain_community.vectorstores.utils import DistanceStrategy
 
     dataset_ref = os.environ.get("SAR_CORPUS_DATASET", corpus_cfg.corpus_dataset)
@@ -125,18 +170,18 @@ def _load_raw_faiss_corpus(index_path: str, embeddings: Any, corpus_cfg: Any) ->
             )
         text_col = fallback
 
+    # Lazy docstore: FAISS only calls docstore.search(id) for the top-k hits per query
+    # (see similarity_search_with_score_by_vector), so materializing N Document objects +
+    # an N-entry dict up front is pure waste — and that allocation is GIL-bound, so pandas/
+    # HF parallelism can't speed it up. Keep the single columnar text materialization and
+    # build each Document on demand (O(k) per query instead of O(N) at load).
     texts = ds[text_col]  # single materialization, preserves row/vector order
-    docstore_dict = {
-        str(i): Document(page_content="" if t is None else str(t), metadata={"row": i})
-        for i, t in enumerate(texts)
-    }
-    index_to_docstore_id = {i: str(i) for i in range(len(texts))}
 
     return FAISS(
         embedding_function=embeddings,
         index=index,
-        docstore=InMemoryDocstore(docstore_dict),
-        index_to_docstore_id=index_to_docstore_id,
+        docstore=_LazyTextDocstore(texts),
+        index_to_docstore_id=_IdentityStrMapping(len(texts)),
         distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
     )
 

@@ -35,7 +35,7 @@ llm:
       api_base: http://n0172:30000/v1
       api_key: null
       temperature: 0.2
-      max_tokens: 4096
+      max_tokens: 8192
       max_input_tokens: 32768
       top_p: 0.95
       # Break degenerate sentence-level loops in the long `information` list that

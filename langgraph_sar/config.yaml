@@ -1,0 +1,129 @@
+# langgraph_sar — loaded by SARConfig.from_yaml() and pytest (langgraph_sar/tests).
+#
+# Endpoints assume SSH tunnels through the `t2` jump host:
+#   localhost:30172 -> n0172:30000   (LLM        : Qwen/Qwen3-8B,          SGLang)
+#   localhost:30164 -> n0164:30000   (embedder   : Qwen/Qwen3-Embedding-4B, SGLang)
+# Bring the tunnel up with, e.g.:
+#   ssh -N -L 30172:n0172:30000 -L 30164:n0164:30000 t2
+#
+# Secrets: prefer API_KEY / OPENAI_API_KEY (SGLang) and ANTHROPIC_API_KEY (judge)
+# in the environment; from_yaml() merges them so they need not live here.
+
+llm:
+  # Top-level key inherited by any tier whose own api_key is null.
+  # Env merge: API_KEY / OPENAI_API_KEY -> this field; ANTHROPIC_API_KEY -> Claude tiers.
+  api_key: null
+
+  tiers:
+    # Frozen generator. Temperature >0 gives MCTS branching entropy; do not add response caching.
+    generator:
+      model_name: openai/Qwen/Qwen3-8B
+      api_base: http://localhost:30172/v1
+      api_key: null
+      temperature: 0.7
+      max_tokens: 8192
+      max_input_tokens: 32768
+      top_p: 0.95
+      enable_thinking: false
+      supports_thinking_toggle: true
+      max_retries: 3
+      timeout: 300
+
+    # TRAINABLE extractor. Swap model_name/api_base to the RL Qwen3-4B checkpoint here, no graph edits.
+    extractor:
+      model_name: openai/Qwen/Qwen3-8B
+      api_base: http://localhost:30172/v1
+      api_key: null
+      temperature: 0.2
+      max_tokens: 4096
+      max_input_tokens: 32768
+      top_p: 0.95
+      enable_thinking: false
+      supports_thinking_toggle: true
+      max_retries: 3
+      timeout: 300
+
+    # Judge / evaluator tier. Defaults to the same SGLang Qwen endpoint as the generator.
+    # Set api_base: null and a provider model_name (e.g. claude-*) for cloud judges.
+    evaluator:
+      model_name: openai/Qwen/Qwen3-8B
+      api_base: http://localhost:30172/v1
+      api_key: null
+      temperature: 0.0
+      max_tokens: 8192
+      max_input_tokens: 32768
+      top_p: 0.95
+      enable_thinking: false
+      supports_thinking_toggle: false
+      max_retries: 3
+      timeout: 300
+
+  # role -> tier. Unknown roles fall back to "generator" in RoleModelRegistry.
+  role_tiers:
+    subquestion_generator: generator
+    answer_generator: generator
+    query_generator: generator
+    finalizer: generator
+    self_corrector: generator
+    question_rephraser: generator
+    synthesizer: generator
+    extractor: extractor
+    outcome_judge: evaluator
+    path_judge: evaluator
+    answer_synthesizer: evaluator
+    majority_voter: evaluator
+
+search:
+  # Strategy router: "socratic" | "mcts".
+  strategy: socratic
+
+  # Retrieval / extraction cost knobs.
+  top_k: 5
+  query_expansion: false
+  extractor_join: false
+  reflect_threshold_facts: 8
+
+  # Socratic loop.
+  max_depth: 5
+
+  # MCTS selection / rollout.
+  exploration_weight: 1.4
+  use_node_type_prior: true
+  num_rollouts: 8
+  high_confidence: 0.9
+  patience: 3
+
+  # Reward mode: "dual" | "confidence_blend".
+  reward_lambda: 1.0
+  reward_mode: dual
+
+  # Global-memory commit gate: "factuality" | "reward" | "off".
+  memory_commit_gate: factuality
+  memory_commit_threshold: 0.5
+
+  # LangGraph superstep guards layered over max_depth / num_rollouts.
+  socratic_recursion_limit: 75
+  mcts_recursion_limit: 150
+
+memory:
+  extractor_max_input_chars: 24000
+  max_memory_facts: 64
+  confidence_tags: true
+
+retriever:
+  corpus:
+    # Local LangChain FAISS bundle. Override with SAR_CORPUS_INDEX_PATH when needed.
+    index_path: data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss
+    search_k: 10
+    embedder:
+      model_name: Qwen/Qwen3-Embedding-4B
+      url: http://localhost:30164/v1
+      api_key: null
+
+# Optional web tool (paper "+Google Search" variant). Off for corpus-only parity.
+web_search:
+  enabled: false
+  api_key: null
+  top_k: 5
+  crawl_full_text: false
+  max_crawl_requests_per_second: 2.0

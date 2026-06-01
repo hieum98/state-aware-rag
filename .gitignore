@@ -20,3 +20,5 @@ state_aware_rag.egg-info
 models/
 checkpoint/
 SLURM_eval/
+langgraph_sar/tests
+langgraph_sar/IMPLEMENTATION_PLAN.md

@@ -21,7 +21,18 @@ dependencies = [
   "tqdm",
   "openai",
   "litellm",
+  "langchain-core",
+  "langchain-community",
+  "langchain-openai",
+  "langchain-litellm",
+  "langgraph",
+  "faiss-cpu",
+  "httpx",
+  "beautifulsoup4",
+  "lxml",
+  "duckduckgo-search",
   "pydantic",
+  "pyyaml",
   "pebble",
   "requests",
 ]
@@ -37,4 +48,6 @@ where = ["."]
 include = [
   "state_aware_rag",
   "state_aware_rag.*",
+  "langgraph_sar",
+  "langgraph_sar.*",
 ]

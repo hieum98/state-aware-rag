@@ -3,19 +3,27 @@ State-Aware RAG
 
 State-Aware RAG is a modular multi-hop Retrieval-Augmented Generation (RAG) framework featuring two complementary search paradigms:
 
-1. MCTS (Monte Carlo Tree Search) planner for exploratory, branching multi-step reasoning
-2. CoT (Chain-of-Thought) linear planner for lightweight sequential reasoning
+1. **MCTS** (Monte Carlo Tree Search) — exploratory, branching multi-step reasoning
+2. **Socratic / CoT** — lightweight linear (chain-of-thought) reasoning
 
-The system performs iterative (decompose → retrieve → extract → evaluate → synthesize) cycles while maintaining an explicit evolving reasoning state ("memory"). Trees and intermediate artifacts can be persisted, re-loaded, and post-analyzed.
+The system performs iterative **decompose → retrieve → extract → evaluate → synthesize** cycles while maintaining an explicit evolving working memory. Trees and intermediate artifacts can be persisted, re-loaded, and post-analyzed.
 
-> Core design goals: transparency, reproducibility, pluggability (LLMs & retrievers), and scalability (multi-processing + concurrency + caching).
+Two inference stacks coexist in this repository:
+
+| Stack | Path | Status |
+|-------|------|--------|
+| **Legacy** | `state_aware_rag/` + `inference.py` | Production training/eval path; Hydra configs |
+| **LangGraph port** | `langgraph_sar/` | Inference/serving port on LangGraph (Phases 0–4 complete) |
+
+> Design goals: transparency, reproducibility, pluggability (LLMs & retriever), and scalable batch inference.
 
 Table of Contents
 -----------------
 
 - Features
+- LangGraph Port (`langgraph_sar`)
 - Architecture Overview
-- Quick Start
+- Quick Start (legacy)
   - Environment
   - Minimal Run (Single Question)
   - Dataset Inference
@@ -36,13 +44,131 @@ Features
 - Multi-hop reasoning with explicit search state (reasoning nodes + memory)
 - Two planners: MCTS (branching) and CoT (linear)
 - Modular role agents (Generator / Retriever / Extractor / Evaluator)
+- **LangGraph port** (`langgraph_sar/`) with tiered `ChatLiteLLM` registry, PUCT MCTS, and Socratic loop
+- Local FAISS + Qwen embedding retrieval (no separate retriever HTTP server in the port)
 - Pluggable LLM backends via OpenAI-compatible or LiteLLM interface
-- Online (HTTP API) and optional offline (FlashRAG) retrieval
+- Online (HTTP API) and optional offline (FlashRAG) retrieval in the legacy stack
 - Structured output extraction with fallback text parsing
 - Concurrency + multi-processing + deterministic caching
 - Reasoning tree export & reload (resumable search)
 - Evaluation suite: F1, Exact Match, Sub EM, Retrieval Recall, LLM Judge
 - Hydra + YAML config for reproducible experiment control
+
+---
+LangGraph Port (`langgraph_sar`)
+--------------------------------
+
+The LangGraph port reproduces the paper's inference modes on **LangGraph** primitives: shared curated text memory, per-doc extractor fan-out, dual path/outcome reward, and a cost-optimized default (no query expansion, `top_k` truncation). See `langgraph_sar/IMPLEMENTATION_PLAN.md` for the full design.
+
+### Strategies
+
+| `search.strategy` | Graph | Actions |
+|-------------------|-------|---------|
+| `socratic` | `SocraticGraph` | A1 + A5 linear loop (≈ legacy CoT) |
+| `mcts` | `MCTSGraph` | A1–A5 tree search + Socratic rollouts |
+
+Configure in `langgraph_sar/config.yaml` (tiers, endpoints, `search.*`, `memory.*`).
+
+### Prerequisites
+
+1. **Python ≥ 3.10** and `pip install -e .` (plus LangGraph / LangChain deps used by the port).
+2. **SGLang tunnels** (cluster default in `config.yaml`):
+
+```bash
+ssh -N -L 30172:n0172:30000 -L 30164:n0164:30000 t2
+```
+
+3. **FAISS corpus** — full wiki index at `data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss`, or a toy index for smoke tests:
+
+```bash
+python langgraph_sar/tests/phase1/create_toy_corpus.py
+export SAR_CORPUS_INDEX_PATH=data/toy-index/index.faiss
+```
+
+4. **API key** — `export API_KEY=EMPTY` (or your SGLang key) for Qwen tiers; evaluator defaults to the same local endpoint as the generator.
+
+### Single-question inference (Python API)
+
+```python
+import asyncio
+from langgraph_sar import SARConfig, answer_question
+
+async def main():
+    cfg = SARConfig.from_yaml()
+    cfg.search.strategy = "socratic"  # or "mcts"
+    cfg.search.max_depth = 3
+
+    result = await answer_question(
+        "Who founded the company that created the iPhone?",
+        config=cfg,
+        golden_answer=["Steve Jobs"],  # optional; judge-only by default
+        eval_mode="judge_only",
+    )
+    print(result.pred)
+    print(result.detailed_answer)
+
+asyncio.run(main())
+```
+
+### Batch inference
+
+```python
+from langgraph_sar import answer_records_batch, SARConfig
+
+rows = [
+    {"question": "...", "golden_answers": ["..."], "eval_mode": "judge_only"},
+]
+out = await answer_records_batch(rows, config=SARConfig.from_yaml(), max_workers=4)
+```
+
+`teacher_forced` rows are tagged but **excluded from metrics** via `filter_records_for_metrics()` / `compute_metrics_from_records()` before calling root `evaluate.py`.
+
+### Live smoke test
+
+End-to-end check against real SGLang + toy FAISS (≈40–60s per run):
+
+```bash
+export SAR_CORPUS_INDEX_PATH=data/toy-index/index.faiss
+export API_KEY=EMPTY
+
+python -m langgraph_sar.scripts.smoke_live --strategy socratic --max-depth 2
+python -m langgraph_sar.scripts.smoke_live --strategy mcts --max-depth 2 --num-rollouts 1
+```
+
+Optional pytest live markers (skip if tunnels are down):
+
+```bash
+pytest langgraph_sar/tests/phase0/test_live_sglang_endpoints.py -m live_sglang
+```
+
+### Verified smoke results (local SGLang + toy corpus)
+
+| Strategy | Latency | Example prediction |
+|----------|---------|-------------------|
+| `socratic` | ~37s | Steve Jobs founded Apple Inc. (iPhone maker) in 1976 with Steve Wozniak. |
+| `mcts` (`num_rollouts=1`) | ~45s | Apple Inc. founded 1976 by Steve Jobs and Steve Wozniak. |
+
+### Explicit warnings (no silent fallbacks)
+
+Recoverable degradation (JSON parse fallback, MCTS synthesis fallback, blocked memory commit, failed page crawl, etc.) emits **`SARExplicitFallbackWarning`** via `langgraph_sar.explicit.warn_explicit` and logs at WARNING. Hard failures (missing FAISS index, `openai/*` tier without `api_base`) raise **`RuntimeError`** via `raise_explicit`.
+
+```bash
+# Treat fallbacks as test failures
+pytest langgraph_sar/tests -W error::langgraph_sar.explicit.SARExplicitFallbackWarning
+
+# Verbose per-sample LLM I/O (off by default)
+export LANGGRAPH_SAR_LLM_DEBUG=1
+```
+
+### Tests
+
+```bash
+pytest langgraph_sar/tests/phase0 langgraph_sar/tests/phase1/test_phase1_specs.py \
+       langgraph_sar/tests/phase2 langgraph_sar/tests/phase3 langgraph_sar/tests/phase4 \
+       langgraph_sar/tests/test_explicit_warnings.py
+```
+
+Phase 1 integration tests against the full wiki index require the embedder tunnel and `data/wiki23-.../index.faiss`.
 
 ---
 Architecture Overview
@@ -68,8 +194,8 @@ Key files:
 
 Each node logs: node type, memory snapshot, confidence, content (sub-question, answer, synthesis, final answer), plus lineage. Trees can be reloaded to continue or analyze.
 
-Quick Start
------------
+Quick Start (legacy `inference.py`)
+-----------------------------------
 
 ### 1. Environment
 
@@ -269,18 +395,17 @@ Directory Structure (selected)
 ------------------------------
 
 ```text
-inference.py            # Main inference entry
-evaluate.py             # Metrics & dataset annotation
-configs/                # Hydra configs
-state_aware_rag/
-  agents/              # Agent abstractions & role logic
-  planners/            # MCTS & CoT planners
-  preprocess/          # Normalization utilities
-  utils/               # Metrics & helpers
+inference.py            # Legacy inference entry (Hydra)
+evaluate.py             # Metrics (shared by legacy + langgraph_sar batch glue)
+langgraph_sar/          # LangGraph port (config, graphs, system.py, tests/)
+  system.py             # answer_question / batch / metric filtering
+  config.yaml           # Default SGLang endpoints & search knobs
+  scripts/smoke_live.py # Live end-to-end smoke test
+configs/                # Hydra configs (legacy)
+state_aware_rag/        # Legacy agents & planners (training reference)
 results/                # Saved HF datasets of predictions
-cache/                  # LLM response caches
-mcts_trees/             # (Optional) reasoning tree JSONLs
-scripts/                # Helper shell scripts (deploy, eval)
+cache/                  # Legacy LLM response caches
+scripts/                # Deploy / eval shell helpers
 ```
 
 ---
@@ -308,6 +433,9 @@ Troubleshooting
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
 | Empty `retrieval_docs` | Retriever URL wrong or no results | Verify API endpoint & corpus |
+| LangGraph `AuthenticationError` on judge | Evaluator `api_base: null` routes to OpenAI | Set evaluator tier to `http://localhost:30172/v1` in `langgraph_sar/config.yaml` |
+| LangGraph parse errors after JSON | Qwen hit `max_tokens` with trailing whitespace | Lower temperature; parsing strips first JSON object; watch `SARExplicitFallbackWarning` from `langgraph_sar/llm.py` |
+| `FAISS index not found` | Missing local corpus | `SAR_CORPUS_INDEX_PATH` or run `create_toy_corpus.py` |
 | Cache not updating | Prompt or params changed but same hash path reused | Manually clear `cache/<role>/<model>` |
 | MCTS very slow | Large `num_rollouts` * `max_depth` | Reduce both; enable `verbose=false` |
 | OOM / rate errors | Concurrency too high | Lower `num_workers` & `concurrency` |

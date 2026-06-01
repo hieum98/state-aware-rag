@@ -121,6 +121,24 @@ def _apply_role_defaults(role: Role, parsed_dict: Dict[str, Any]) -> None:
         return
 
     if role.name == "subquestion_generator":
+        if parsed_dict.get("answerable_main_question") is None:
+            # Nothing parseable about answerability (empty/truncated output). Default to
+            # False; paired with an empty subquestion below, route_after_subq concludes.
+            warn_explicit(
+                "Subquestion response omitted 'answerable_main_question'; defaulting to False.",
+                component="llm.parse_fallback",
+                details={"role": role.name, "field": "answerable_main_question", "default": False},
+            )
+            parsed_dict["answerable_main_question"] = False
+        if not parsed_dict.get("subquestion"):
+            # No parseable next subquestion. Empty string makes route_after_subq go to
+            # `conclude` (answer from current memory) rather than recursing on garbage.
+            warn_explicit(
+                "Subquestion response omitted a parseable 'subquestion'; defaulting to empty (concludes branch).",
+                component="llm.parse_fallback",
+                details={"role": role.name, "field": "subquestion"},
+            )
+            parsed_dict["subquestion"] = ""
         if not parsed_dict.get("reasoning"):
             warn_explicit(
                 "Subquestion response omitted 'reasoning'; using placeholder text.",
@@ -202,10 +220,12 @@ def parse_fallback(role: Role, raw_text: Any, *, parsing_error: Any = None) -> B
             if field in keys:
                 field_optional[keys.index(field)] = True
     if role.name == "subquestion_generator":
-        # A truncated generation can stop after `answerable_main_question`/`subquestion`,
-        # omitting `reasoning` and `gap_type`. Treat both as optional and backfill in
-        # _apply_role_defaults so one truncated completion degrades instead of aborting.
-        for field in ("reasoning", "gap_type"):
+        # A completion that truncates early — or returns an empty `{}` when thinking
+        # consumed the whole budget — may yield none of the four fields. Treat all as
+        # optional and backfill in _apply_role_defaults: an empty subquestion routes the
+        # Socratic step to `conclude` (route_after_subq), so one bad call concludes from
+        # current memory instead of aborting the whole run.
+        for field in ("answerable_main_question", "subquestion", "reasoning", "gap_type"):
             if field in keys:
                 field_optional[keys.index(field)] = True
     if role.name == "outcome_judge":

@@ -163,6 +163,13 @@ class EmbedderConfig(BaseModel):
     model_name: str = "Qwen/Qwen3-Embedding-4B"
     url: str = "http://localhost:30164/v1"
     api_key: Optional[str] = None
+    # Qwen3-Embedding is asymmetric: passages are embedded raw (build_index.py) but
+    # QUERIES must carry this instruction prefix ({query} placeholder). Mirrors the
+    # legacy servers/retriever.py qwen3 default; empty string disables it.
+    query_instruction: str = (
+        "Instruct: Given a web search query, retrieve relevant passages "
+        "that answer the query\nQuery: {query}"
+    )
 
 
 class CorpusConfig(BaseModel):

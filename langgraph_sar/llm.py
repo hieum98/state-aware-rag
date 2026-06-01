@@ -92,6 +92,15 @@ def _content_to_text(content: Any) -> str:
 def _apply_role_defaults(role: Role, parsed_dict: Dict[str, Any]) -> None:
     """Fill known-safe defaults only after an explicit warning per field."""
     if role.name == "extractor":
+        if not parsed_dict.get("information"):
+            # No parseable facts recovered (truncated/looping output). Default to empty so
+            # the doc contributes nothing; decision inference below then yields not_relevant.
+            warn_explicit(
+                "Extractor response omitted a parseable 'information' list; defaulting to empty.",
+                component="llm.parse_fallback",
+                details={"role": role.name, "field": "information"},
+            )
+            parsed_dict["information"] = []
         if parsed_dict.get("reasoning") is None:
             warn_explicit(
                 "Extractor response omitted 'reasoning'; using placeholder text.",
@@ -185,11 +194,11 @@ def parse_fallback(role: Role, raw_text: Any, *, parsing_error: Any = None) -> B
     field_optional = [s[1] for s in specs]
 
     if role.name == "extractor":
-        # A truncated/looping extractor generation (hit max_tokens mid-array) still yields
-        # a recoverable `information` list, but emits no `decision`/`reasoning`. Treat both
-        # as optional here and infer them in _apply_role_defaults so one bad call degrades
-        # to "keep recovered facts" instead of aborting the whole run.
-        for field in ("reasoning", "decision"):
+        # A truncated/looping extractor generation (hit max_tokens mid-array) may emit no
+        # parseable `information` list and/or no `decision`/`reasoning`. Treat all three as
+        # optional and backfill in _apply_role_defaults so one bad call degrades to
+        # "no facts from this doc" (not_relevant) instead of aborting the whole run.
+        for field in ("reasoning", "decision", "information"):
             if field in keys:
                 field_optional[keys.index(field)] = True
     if role.name == "subquestion_generator":

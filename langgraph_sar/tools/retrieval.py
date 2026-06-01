@@ -25,7 +25,18 @@ from ..config import RetrieverConfig
 
 
 def get_corpus_retriever(retriever_cfg: RetrieverConfig):
-    """Build the FAISS retriever, embedding queries via the deployed endpoint."""
+    """Build the FAISS retriever, embedding queries via the deployed endpoint.
+
+    Two index layouts are supported (see ``CorpusConfig``):
+
+    * **LangChain bundle** — ``<name>.faiss`` + ``<name>.pkl`` docstore sidecar
+      (e.g. the toy index); loaded via :meth:`FAISS.load_local`.
+    * **Raw HF-datasets index** — a bare ``<name>.faiss`` written by
+      ``state_aware_rag/servers/build_index.py`` (``datasets.save_faiss_index``),
+      whose passage text lives in a separate HF dataset (``corpus.corpus_dataset``).
+      The docstore is reconstructed from that dataset, row order matching the
+      vector order, mirroring the legacy ``servers/retriever.py`` design.
+    """
     corpus = retriever_cfg.corpus
     emb_cfg = corpus.embedder
 
@@ -41,14 +52,98 @@ def get_corpus_retriever(retriever_cfg: RetrieverConfig):
             f"FAISS index not found at {index_path!r}. Set SAR_CORPUS_INDEX_PATH "
             "to the local COE-style corpus index bundle."
         )
-    vector_store = FAISS.load_local(
-        folder_path=os.path.dirname(index_path),
-        embeddings=embeddings,
-        index_name=os.path.basename(index_path).replace(".faiss", ""),
-        allow_dangerous_deserialization=True,
-    )
+
+    folder = os.path.dirname(index_path) or "."
+    index_name = os.path.basename(index_path).replace(".faiss", "")
+    pkl_path = os.path.join(folder, index_name + ".pkl")
+
+    if os.path.exists(pkl_path):
+        vector_store = FAISS.load_local(
+            folder_path=folder,
+            embeddings=embeddings,
+            index_name=index_name,
+            allow_dangerous_deserialization=True,
+        )
+    else:
+        # Raw HF-datasets index: no ``.pkl`` sidecar — rebuild the docstore from
+        # the companion corpus dataset (legacy build_index.py / retriever.py path).
+        vector_store = _load_raw_faiss_corpus(index_path, embeddings, corpus)
 
     return vector_store.as_retriever(search_kwargs={"k": corpus.search_k})
+
+
+def _load_raw_faiss_corpus(index_path: str, embeddings: Any, corpus_cfg: Any) -> FAISS:
+    """Wrap a bare HF-datasets FAISS index in a LangChain store via a side corpus.
+
+    ``build_index.py`` L2-normalizes passage embeddings and indexes them with
+    ``METRIC_INNER_PRODUCT`` (cosine), so we search with ``MAX_INNER_PRODUCT``.
+    Query normalization is unnecessary for ranking: every passage is scored
+    against the same query vector, so the query norm scales all scores by one
+    constant and leaves the top-k order — all this tool consumes — unchanged.
+    """
+    import faiss  # local import: only needed for the raw-index layout
+    import datasets
+    from langchain_community.docstore.in_memory import InMemoryDocstore
+    from langchain_community.vectorstores.utils import DistanceStrategy
+
+    dataset_ref = os.environ.get("SAR_CORPUS_DATASET", corpus_cfg.corpus_dataset)
+    if not dataset_ref:
+        raise FileNotFoundError(
+            f"No docstore sidecar {index_name_for(index_path)!r} next to {index_path!r}, "
+            "so the index is a raw HF-datasets index. Set retriever.corpus.corpus_dataset "
+            "(or env SAR_CORPUS_DATASET) to the corpus that supplies passage text "
+            "(e.g. 'Hieuman/wiki23-processed')."
+        )
+
+    index = faiss.read_index(index_path)
+
+    if os.path.exists(dataset_ref):
+        ds = datasets.load_from_disk(dataset_ref)
+        if isinstance(ds, datasets.DatasetDict):
+            ds = ds[corpus_cfg.corpus_split]
+    else:
+        ds = datasets.load_dataset(dataset_ref, split=corpus_cfg.corpus_split)
+
+    if index.ntotal != len(ds):
+        raise ValueError(
+            f"Index/corpus size mismatch: FAISS index {index_path!r} has "
+            f"{index.ntotal} vectors but corpus {dataset_ref!r} "
+            f"(split={corpus_cfg.corpus_split!r}) has {len(ds)} rows. The corpus "
+            "must be the exact dataset the index was built from, in the same order."
+        )
+
+    text_col = corpus_cfg.text_column
+    if text_col not in ds.column_names:
+        fallback = next(
+            (c for c in ("contents", "text", "passage", "content") if c in ds.column_names),
+            None,
+        )
+        if fallback is None:
+            raise ValueError(
+                f"text_column {text_col!r} not found in corpus {dataset_ref!r}. "
+                f"Available columns: {ds.column_names}. Set retriever.corpus.text_column."
+            )
+        text_col = fallback
+
+    texts = ds[text_col]  # single materialization, preserves row/vector order
+    docstore_dict = {
+        str(i): Document(page_content="" if t is None else str(t), metadata={"row": i})
+        for i, t in enumerate(texts)
+    }
+    index_to_docstore_id = {i: str(i) for i in range(len(texts))}
+
+    return FAISS(
+        embedding_function=embeddings,
+        index=index,
+        docstore=InMemoryDocstore(docstore_dict),
+        index_to_docstore_id=index_to_docstore_id,
+        distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
+    )
+
+
+def index_name_for(index_path: str) -> str:
+    """Expected ``.pkl`` sidecar filename for a given ``.faiss`` index path."""
+    return os.path.basename(index_path).replace(".faiss", "") + ".pkl"
 
 
 _retriever_instance = None

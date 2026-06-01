@@ -157,10 +157,22 @@ class CorpusConfig(BaseModel):
     """Local FAISS corpus + the embedder used to query it (coe pattern, no reranker)."""
 
     embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
-    # Path to the LangChain FAISS bundle (``<name>.faiss`` + ``<name>.pkl``).
+    # Path to the FAISS index. Two layouts are supported:
+    #   1. LangChain bundle  — ``<name>.faiss`` + ``<name>.pkl`` sidecar docstore
+    #      (e.g. the toy index); loaded via ``FAISS.load_local``.
+    #   2. Raw HF-datasets index — a bare ``<name>.faiss`` produced by
+    #      ``state_aware_rag/servers/build_index.py`` (datasets.save_faiss_index),
+    #      whose passage text lives in a separate HF dataset (``corpus_dataset``).
     # Override with env SAR_CORPUS_INDEX_PATH when the corpus lives elsewhere.
     index_path: str = "data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss"
     search_k: int = 10  # FAISS fetch depth before search.top_k truncation downstream
+
+    # Raw-index layout only (no ``.pkl`` sidecar): HF dataset name or local
+    # ``load_from_disk`` path supplying passage text. Row order MUST match the
+    # vector order the index was built from. Override with env SAR_CORPUS_DATASET.
+    corpus_dataset: Optional[str] = None
+    corpus_split: str = "train"
+    text_column: str = "contents"
 
 
 class WebSearchConfig(BaseModel):
@@ -209,6 +221,8 @@ class SARConfig(BaseModel):
             (the SGLang/OpenAI-compatible Qwen endpoints).
           - ``ANTHROPIC_API_KEY`` → any ``claude``/``anthropic`` tier's key.
           - ``SAR_CORPUS_INDEX_PATH`` → ``retriever.corpus.index_path``.
+          - ``SAR_CORPUS_DATASET`` → ``retriever.corpus.corpus_dataset`` (raw-index
+            layout: HF dataset / local path supplying passage text).
         """
         p = Path(path) if path is not None else cls.default_yaml_path()
         raw: Optional[Dict[str, Any]] = None
@@ -237,5 +251,9 @@ class SARConfig(BaseModel):
             env_index = os.environ.get("SAR_CORPUS_INDEX_PATH")
             if env_index:
                 merged.retriever.corpus.index_path = env_index
+
+            env_corpus = os.environ.get("SAR_CORPUS_DATASET")
+            if env_corpus:
+                merged.retriever.corpus.corpus_dataset = env_corpus
 
         return merged

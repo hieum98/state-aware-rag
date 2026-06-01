@@ -112,9 +112,18 @@ memory:
 
 retriever:
   corpus:
-    # Local LangChain FAISS bundle. Override with SAR_CORPUS_INDEX_PATH when needed.
-    index_path: data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss
+    # FAISS index. Two layouts are auto-detected by the presence of a `.pkl` sidecar:
+    #   1. LangChain bundle  — `<name>.faiss` + `<name>.pkl` (e.g. the toy index).
+    #   2. Raw HF-datasets index — bare `<name>.faiss` from build_index.py; passage
+    #      text comes from `corpus_dataset` below. Override path with SAR_CORPUS_INDEX_PATH.
+    index_path: data/Qwen3-4B-Emb-index.faiss
     search_k: 10
+    # Raw-index layout only: HF dataset name (or local load_from_disk path) supplying
+    # passage text, row order matching the index. Override with SAR_CORPUS_DATASET.
+    # Leave null for the LangChain-bundle layout. text_column is the passage field.
+    corpus_dataset: Hieuman/wiki23-processed
+    corpus_split: train
+    text_column: contents
     embedder:
       model_name: Qwen/Qwen3-Embedding-4B
       url: http://localhost:30164/v1

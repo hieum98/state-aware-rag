@@ -10,7 +10,13 @@ Usage (from repo root)::
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+
+# Quiet LiteLLM's per-call INFO banner ("LiteLLM completion() model=..."). LiteLLM reads
+# LITELLM_LOG when first imported (transitively via .system below), so set it before that.
+os.environ.setdefault("LITELLM_LOG", "WARNING")
+
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -173,10 +179,12 @@ async def run_inference(cfg: DictConfig) -> None:
     )
     os.makedirs(results_dir, exist_ok=True)
 
+    # question= is an exclusive single-shot (matches the module docstring); only
+    # fall through to the dataset run when no single question was given.
     if cfg.get("question"):
         await _run_single_question(cfg, sar, eval_mode=eval_mode)
-
-    await _run_dataset(cfg, sar, results_dir, eval_mode=eval_mode)
+    else:
+        await _run_dataset(cfg, sar, results_dir, eval_mode=eval_mode)
 
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "configs" / "infer_langgraph"
@@ -188,6 +196,11 @@ _CONFIG_DIR = Path(__file__).resolve().parent.parent / "configs" / "infer_langgr
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
+    # Hydra reconfigures the root logger at INFO inside the decorator, which is why the
+    # LiteLLM banner reappears as "[...][LiteLLM][INFO]". Pin the noisy LLM-stack loggers
+    # to WARNING here (after that reconfiguration) so only WARNING+ survives.
+    for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "litellm", "httpx"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     print("Config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
     asyncio.run(run_inference(cfg))
 

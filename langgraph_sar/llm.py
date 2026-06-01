@@ -99,6 +99,16 @@ def _apply_role_defaults(role: Role, parsed_dict: Dict[str, Any]) -> None:
                 details={"role": role.name, "field": "reasoning"},
             )
             parsed_dict["reasoning"] = "No reasoning field returned by model."
+        if not parsed_dict.get("decision"):
+            # Infer from recovered extractions: a populated `information` list means the
+            # model was extracting (relevant) before it truncated; empty means nothing found.
+            inferred = "relevant" if parsed_dict.get("information") else "not_relevant"
+            warn_explicit(
+                "Extractor response omitted 'decision'; inferring from recovered information.",
+                component="llm.parse_fallback",
+                details={"role": role.name, "field": "decision", "default": inferred},
+            )
+            parsed_dict["decision"] = inferred
         return
 
     if role.name == "subquestion_generator":
@@ -167,8 +177,14 @@ def parse_fallback(role: Role, raw_text: Any, *, parsing_error: Any = None) -> B
     value_types = [s[0] for s in specs]
     field_optional = [s[1] for s in specs]
 
-    if role.name == "extractor" and "reasoning" in keys:
-        field_optional[keys.index("reasoning")] = True
+    if role.name == "extractor":
+        # A truncated/looping extractor generation (hit max_tokens mid-array) still yields
+        # a recoverable `information` list, but emits no `decision`/`reasoning`. Treat both
+        # as optional here and infer them in _apply_role_defaults so one bad call degrades
+        # to "keep recovered facts" instead of aborting the whole run.
+        for field in ("reasoning", "decision"):
+            if field in keys:
+                field_optional[keys.index(field)] = True
     if role.name == "subquestion_generator" and "gap_type" in keys:
         field_optional[keys.index("gap_type")] = True
     if role.name == "outcome_judge":

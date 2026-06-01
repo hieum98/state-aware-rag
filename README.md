@@ -58,7 +58,7 @@ Features
 LangGraph Port (`langgraph_sar`)
 --------------------------------
 
-The LangGraph port reproduces the paper's inference modes on **LangGraph** primitives: shared curated text memory, per-doc extractor fan-out, dual path/outcome reward, and a cost-optimized default (no query expansion, `top_k` truncation). See `langgraph_sar/IMPLEMENTATION_PLAN.md` for the full design.
+The LangGraph port reproduces the paper's inference modes on **LangGraph** primitives: shared curated text memory, per-doc extractor fan-out, dual path/outcome reward, and a cost-optimized default (no query expansion, `top_k` truncation). 
 
 ### Strategies
 
@@ -72,19 +72,8 @@ Configure in `langgraph_sar/config.yaml` (tiers, endpoints, `search.*`, `memory.
 ### Prerequisites
 
 1. **Python ≥ 3.10** and `pip install -e .` (plus LangGraph / LangChain deps used by the port).
-2. **SGLang tunnels** (cluster default in `config.yaml`):
-
-```bash
-ssh -N -L 30172:n0172:30000 -L 30164:n0164:30000 t2
-```
-
-3. **FAISS corpus** — full wiki index at `data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss`, or a toy index for smoke tests:
-
-```bash
-python langgraph_sar/tests/phase1/create_toy_corpus.py
-export SAR_CORPUS_INDEX_PATH=data/toy-index/index.faiss
-```
-
+2. **SGLang**
+3. **FAISS corpus** — full wiki index at `data/wiki23-Qwen3-4B-Emb-Indexed/index.faiss`
 4. **API key** — `export API_KEY=EMPTY` (or your SGLang key) for Qwen tiers; evaluator defaults to the same local endpoint as the generator.
 
 ### Single-question inference (Python API)
@@ -120,56 +109,6 @@ rows = [
 ]
 out = await answer_records_batch(rows, config=SARConfig.from_yaml(), max_workers=4)
 ```
-
-`teacher_forced` rows are tagged but **excluded from metrics** via `filter_records_for_metrics()` / `compute_metrics_from_records()` before calling root `evaluate.py`.
-
-### Live smoke test
-
-End-to-end check against real SGLang + toy FAISS (≈40–60s per run):
-
-```bash
-export SAR_CORPUS_INDEX_PATH=data/toy-index/index.faiss
-export API_KEY=EMPTY
-
-python -m langgraph_sar.scripts.smoke_live --strategy socratic --max-depth 2
-python -m langgraph_sar.scripts.smoke_live --strategy mcts --max-depth 2 --num-rollouts 1
-```
-
-Optional pytest live markers (skip if tunnels are down):
-
-```bash
-pytest langgraph_sar/tests/phase0/test_live_sglang_endpoints.py -m live_sglang
-```
-
-### Verified smoke results (local SGLang + toy corpus)
-
-| Strategy | Latency | Example prediction |
-|----------|---------|-------------------|
-| `socratic` | ~37s | Steve Jobs founded Apple Inc. (iPhone maker) in 1976 with Steve Wozniak. |
-| `mcts` (`num_rollouts=1`) | ~45s | Apple Inc. founded 1976 by Steve Jobs and Steve Wozniak. |
-
-### Explicit warnings (no silent fallbacks)
-
-Recoverable degradation (JSON parse fallback, MCTS synthesis fallback, blocked memory commit, failed page crawl, etc.) emits **`SARExplicitFallbackWarning`** via `langgraph_sar.explicit.warn_explicit` and logs at WARNING. Hard failures (missing FAISS index, `openai/*` tier without `api_base`) raise **`RuntimeError`** via `raise_explicit`.
-
-```bash
-# Treat fallbacks as test failures
-pytest langgraph_sar/tests -W error::langgraph_sar.explicit.SARExplicitFallbackWarning
-
-# Verbose per-sample LLM I/O (off by default)
-export LANGGRAPH_SAR_LLM_DEBUG=1
-```
-
-### Tests
-
-```bash
-pytest langgraph_sar/tests/phase0 langgraph_sar/tests/phase1/test_phase1_specs.py \
-       langgraph_sar/tests/phase2 langgraph_sar/tests/phase3 langgraph_sar/tests/phase4 \
-       langgraph_sar/tests/test_explicit_warnings.py
-```
-
-Phase 1 integration tests against the full wiki index require the embedder tunnel and `data/wiki23-.../index.faiss`.
-
 ---
 Architecture Overview
 ---------------------

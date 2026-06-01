@@ -38,6 +38,9 @@ llm:
       max_tokens: 4096
       max_input_tokens: 32768
       top_p: 0.95
+      # Break degenerate sentence-level loops in the long `information` list that
+      # otherwise truncate the JSON and abort the run. SGLang-supported.
+      frequency_penalty: 0.3
       enable_thinking: false
       supports_thinking_toggle: true
       max_retries: 3

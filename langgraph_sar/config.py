@@ -41,6 +41,13 @@ class TierConfig(BaseModel):
     max_tokens: int = 4096
     max_input_tokens: int = 32768
     top_p: float = 0.95
+    # Anti-repetition sampling knobs. ``None`` = omit (the served model's own default),
+    # so non-SGLang providers (Anthropic) never receive an unsupported kwarg. SGLang/vLLM
+    # support all three: ``frequency_penalty``/``presence_penalty`` (OpenAI-style, additive)
+    # and ``repetition_penalty`` (multiplicative, >1.0 suppresses; passed through extra body).
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
     enable_thinking: bool = False
     # Qwen3/SGLang exposes the thinking toggle via ``chat_template_kwargs``.
     # Non-SGLang providers (Anthropic) reject that kwarg, so gate its injection.
@@ -65,6 +72,11 @@ def _default_tiers() -> Dict[str, TierConfig]:
             model_name="openai/Qwen/Qwen3-8B",
             api_base="http://localhost:30172/v1",
             temperature=0.2,
+            # Suppress the degenerate sentence-level loops that truncate a long
+            # ``information`` array and abort the run (the extractor is the only role
+            # asked to emit large verbatim lists). Modest value: enough to break loops
+            # without discouraging legitimately repeated tokens in extracted text.
+            frequency_penalty=0.3,
         ),
         # Judge — deterministic. Routed to the Anthropic API by litellm (no
         # api_base); needs ANTHROPIC_API_KEY. chat_template_kwargs is suppressed.

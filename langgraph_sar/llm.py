@@ -237,6 +237,12 @@ class RoleModelRegistry:
         if tier not in self._instances:
             cfg = self._tiers[tier]
             model_kwargs: Dict[str, Any] = {"top_p": cfg.top_p}
+            # Inject anti-repetition knobs only when set, so the Anthropic evaluator tier
+            # (penalties left None) never receives a kwarg its provider rejects.
+            for penalty in ("frequency_penalty", "presence_penalty", "repetition_penalty"):
+                value = getattr(cfg, penalty, None)
+                if value is not None:
+                    model_kwargs[penalty] = value
             if cfg.supports_thinking_toggle:
                 model_kwargs["chat_template_kwargs"] = {"enable_thinking": cfg.enable_thinking}
 

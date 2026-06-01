@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 
 # Quiet LiteLLM's per-call INFO banner ("LiteLLM completion() model=..."). LiteLLM reads
 # LITELLM_LOG when first imported (transitively via .system below), so set it before that.
@@ -30,6 +31,37 @@ from .config import SARConfig
 from .system import answer_question, answer_question_streaming, answer_records_batch
 
 _STRATEGY_ALIASES = {"cot": "socratic", "socratic": "socratic", "mcts": "mcts"}
+
+# Free-text overrides pulled out of sys.argv before Hydra parses it. Their values
+# (questions, golden answers) routinely contain Hydra grammar tokens — commas (list/
+# sweep), parens/colons (grouping), bare '-' (operator) — that abort the override
+# lexer. We intercept them here so the user can paste raw text with only normal shell
+# quoting, then inject them back into the parsed cfg in main().
+_FREETEXT_KEYS = ("question", "golden_answer")
+_freetext_overrides: Dict[str, str] = {}
+
+
+def _pop_freetext_overrides(argv: list[str]) -> list[str]:
+    """Strip ``question=…``/``golden_answer=…`` (incl. a leading ``+``) from *argv*.
+
+    Records each captured value in ``_freetext_overrides`` and returns the remaining
+    argv for Hydra. Surrounding matched quotes are stripped, so both raw shell-quoted
+    input and the older nested-quote workaround (``'question="…"'``) yield clean text.
+    """
+    kept: list[str] = []
+    for arg in argv:
+        key_body = arg[1:] if arg.startswith("+") else arg
+        for key in _FREETEXT_KEYS:
+            prefix = key + "="
+            if key_body.startswith(prefix):
+                val = key_body[len(prefix):]
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                    val = val[1:-1]
+                _freetext_overrides[key] = val
+                break
+        else:
+            kept.append(arg)
+    return kept
 
 
 def _resolve_strategy(cfg: DictConfig) -> str:
@@ -201,9 +233,15 @@ def main(cfg: DictConfig) -> None:
     # to WARNING here (after that reconfiguration) so only WARNING+ survives.
     for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "litellm", "httpx"):
         logging.getLogger(name).setLevel(logging.WARNING)
+    # Re-inject the free-text args we hid from Hydra's override grammar (see
+    # _pop_freetext_overrides). force_add tolerates keys not present in the YAML.
+    for key, val in _freetext_overrides.items():
+        OmegaConf.update(cfg, key, val, force_add=True)
     print("Config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
     asyncio.run(run_inference(cfg))
 
 
 if __name__ == "__main__":
+    # Pull free-text overrides out of argv BEFORE Hydra's decorator parses it.
+    sys.argv = _pop_freetext_overrides(sys.argv)
     main()

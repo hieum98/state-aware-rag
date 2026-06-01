@@ -112,6 +112,13 @@ def _apply_role_defaults(role: Role, parsed_dict: Dict[str, Any]) -> None:
         return
 
     if role.name == "subquestion_generator":
+        if not parsed_dict.get("reasoning"):
+            warn_explicit(
+                "Subquestion response omitted 'reasoning'; using placeholder text.",
+                component="llm.parse_fallback",
+                details={"role": role.name, "field": "reasoning"},
+            )
+            parsed_dict["reasoning"] = "No reasoning field returned by model."
         if not parsed_dict.get("gap_type"):
             warn_explicit(
                 "Subquestion response omitted 'gap_type'; defaulting to 'factual'.",
@@ -185,8 +192,13 @@ def parse_fallback(role: Role, raw_text: Any, *, parsing_error: Any = None) -> B
         for field in ("reasoning", "decision"):
             if field in keys:
                 field_optional[keys.index(field)] = True
-    if role.name == "subquestion_generator" and "gap_type" in keys:
-        field_optional[keys.index("gap_type")] = True
+    if role.name == "subquestion_generator":
+        # A truncated generation can stop after `answerable_main_question`/`subquestion`,
+        # omitting `reasoning` and `gap_type`. Treat both as optional and backfill in
+        # _apply_role_defaults so one truncated completion degrades instead of aborting.
+        for field in ("reasoning", "gap_type"):
+            if field in keys:
+                field_optional[keys.index(field)] = True
     if role.name == "outcome_judge":
         for field in ("total_rating", "reasoning"):
             if field in keys:

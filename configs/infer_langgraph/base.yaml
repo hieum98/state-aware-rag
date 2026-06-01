@@ -1,0 +1,38 @@
+defaults:
+  - _self_
+
+# Run strategy: socratic (≈ legacy cot) or mcts. Legacy alias: mode=cot -> socratic, mode=mcts -> mcts.
+strategy: socratic
+mode: null
+
+# Optional path to SAR YAML (relative to original cwd). null → langgraph_sar/config.yaml.
+sar_config: null
+
+# Optional single-question input (still runs dataset mode when data.name is set).
+question: null
+golden_answer: null
+eval_mode: judge_only
+
+# Async concurrency for answer_records_batch (replaces legacy num_proc).
+max_workers: 4
+batch_size: 32
+
+results_dir: results
+
+search:
+  max_depth: 6
+  top_k: 5
+  num_rollouts: 8
+  exploration_weight: 1.4
+  query_expansion: false
+  reward_mode: dual
+  socratic_recursion_limit: 75
+  mcts_recursion_limit: 150
+
+data:
+  name: 2wiki
+  split: null
+  limit: 1000
+  metrics:
+    - llm_judge
+    - sub_em
